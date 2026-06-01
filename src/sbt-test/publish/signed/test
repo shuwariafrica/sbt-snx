@@ -1,0 +1,10 @@
+# sbt-pgp signs both the main and the classified jar at the platform-suffixed coordinate.
+> publishSigned
+$ exists target/repo/africa/shuwari/snxlib_native0.5_3/0.1.0/snxlib_native0.5_3-0.1.0.jar
+$ exists target/repo/africa/shuwari/snxlib_native0.5_3/0.1.0/snxlib_native0.5_3-0.1.0.jar.asc
+$ exists target/repo/africa/shuwari/snxlib_native0.5_3/0.1.0/snxlib_native0.5_3-0.1.0-linux-x86_64.jar
+$ exists target/repo/africa/shuwari/snxlib_native0.5_3/0.1.0/snxlib_native0.5_3-0.1.0-linux-x86_64.jar.asc
+$ exists target/repo/africa/shuwari/snxlib_native0.5_3/0.1.0/snxlib_native0.5_3-0.1.0.pom
+$ exists target/repo/africa/shuwari/snxlib_native0.5_3/0.1.0/snxlib_native0.5_3-0.1.0.pom.asc
+$ exists target/repo/africa/shuwari/snxlib_native0.5_3/0.1.0/snxlib_native0.5_3-0.1.0-sources.jar.asc
+$ exists target/repo/africa/shuwari/snxlib_native0.5_3/0.1.0/snxlib_native0.5_3-0.1.0-javadoc.jar.asc

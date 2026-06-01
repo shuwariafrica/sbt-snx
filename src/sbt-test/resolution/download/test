@@ -1,0 +1,4 @@
+# The injected OS/arch classifier resolves and downloads a real classified artefact
+> check
+# Sources/doc resolution (updateClassifiers) still works alongside the injected classifier
+> checkClassifiers

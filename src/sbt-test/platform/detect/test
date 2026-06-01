@@ -1,0 +1,2 @@
+# Plugin OS/arch and toolchain libc/ABI detection matches the CI-injected ground truth.
+> check

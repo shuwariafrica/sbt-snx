@@ -1,0 +1,5 @@
+addSbtPlugin("africa.shuwari.sbt" % "sbt-shuwari" % "0.15.4")
+addSbtPlugin("africa.shuwari" % "sbt-version" % "0.7.0")
+addSbtPlugin("com.github.sbt" % "sbt-header" % "5.11.0")
+addSbtPlugin("org.scalameta" % "sbt-scalafmt" % "2.6.0")
+addSbtPlugin("ch.epfl.scala" % "sbt-scalafix" % "0.14.6")

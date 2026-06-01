@@ -1,0 +1,180 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  SBT_OPTS: "-Xmx4G -Xss4M -XX:ReservedCodeCacheSize=512M"
+
+jobs:
+  tests-platform-specific:
+    name: "[${{ matrix.os }}${{ matrix.env && format('({0})', matrix.env) || '' }}: ${{ matrix.arch }}] Platform dependent tests"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: linux, env: glibc, arch: x86_64, classifier: linux-x86_64, runner: ubuntu-24.04, dockerImage: "shuwariafrica/el10-jdk:17" }
+          - { os: linux, env: glibc, arch: aarch64, classifier: linux-aarch_64, runner: ubuntu-24.04-arm, dockerImage: "shuwariafrica/el10-jdk:17" }
+          - { os: linux, env: musl, arch: x86_64, classifier: linux-x86_64, runner: ubuntu-24.04, dockerImage: "shuwariafrica/alpine-jdk:17" }
+          - { os: linux, env: musl, arch: aarch64, classifier: linux-aarch_64, runner: ubuntu-24.04-arm, dockerImage: "shuwariafrica/alpine-jdk:17" }
+          - { os: osx, env: "", arch: x86_64, classifier: osx-x86_64, runner: macos-13 }
+          - { os: osx, env: "", arch: aarch64, classifier: osx-aarch_64, runner: macos-14 }
+          # Windows clang's ABI (msvc vs mingw) is the runner's, not guaranteed; the first CI run confirms
+          # `env`, so the ABI assertion is non-blocking until then.
+          - { os: windows, env: msvc, arch: x86_64, classifier: windows-x86_64, runner: windows-2022 }
+          - { os: windows, env: msvc, arch: aarch64, classifier: windows-aarch_64, runner: windows-11-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      DOCKER_IMAGE: ${{ matrix.dockerImage }}
+      SNX_EXPECT_CLASSIFIER: ${{ matrix.classifier }}
+      SNX_EXPECT_OS: ${{ matrix.os }}
+      SNX_EXPECT_ENV: ${{ matrix.env }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Set up Coursier cache
+        uses: coursier/cache-action@v8
+      - name: Set up sbt
+        if: ${{ !matrix.dockerImage }}
+        uses: sbt/setup-sbt@v1
+      - name: "[${{ matrix.classifier }}${{ matrix.env && format(' ({0})', matrix.env) || '' }}]: Platform-specific scripted tests"
+        shell: bash
+        run: ./project/scripts/run-sbt.sh -batch "scripted platform/detect"
+
+  tests:
+    name: "Cross-platform tests"
+    runs-on: ubuntu-24.04
+    container: shuwariafrica/el10-jdk:17
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Set up Coursier cache
+        uses: coursier/cache-action@v8
+      - name: Generate disposable signing key
+        run: |
+          export GNUPGHOME="$(mktemp -d)"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          printf 'pinentry-mode loopback\nbatch\n' > "$GNUPGHOME/gpg.conf"
+          gpg --batch --gen-key <<'EOF'
+          %no-protection
+          Key-Type: RSA
+          Key-Length: 2048
+          Name-Real: snx ci
+          Name-Email: ci@snx.local
+          Expire-Date: 0
+          %commit
+          EOF
+      - name: "Scripted tests"
+        run: sbt "scripted"
+
+  static-analysis:
+    name: Static analysis
+    runs-on: ubuntu-24.04
+    container: shuwariafrica/el10-jdk:17
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Set up Coursier cache
+        uses: coursier/cache-action@v8
+      - name: Verify Source Formatting
+        id: scalafmt
+        continue-on-error: true
+        run: sbt -batch scalafmtCheckAll scalafmtSbtCheck
+      - name: Verify Linting Conformity
+        id: scalafix
+        continue-on-error: true
+        run: sbt -batch "scalafixAll --check"
+      - name: Verify File Header Conformity
+        id: headers
+        continue-on-error: true
+        run: sbt -batch headerCheckAll
+      - name: Check for failures
+        if: always()
+        env:
+          FMT_OUTCOME: ${{ steps.scalafmt.outcome }}
+          FIX_OUTCOME: ${{ steps.scalafix.outcome }}
+          HDR_OUTCOME: ${{ steps.headers.outcome }}
+        run: |
+          failed=""
+          [[ "$FMT_OUTCOME" == "failure" ]] && failed="$failed scalafmtCheckAll"
+          [[ "$FIX_OUTCOME" == "failure" ]] && failed="$failed scalafixAll"
+          [[ "$HDR_OUTCOME" == "failure" ]] && failed="$failed headerCheckAll"
+          
+          if [[ -n "$failed" ]]; then
+            echo "::error::Static analysis checks failed:$failed"
+            exit 1
+          fi
+
+  publish:
+    name: Publish
+    needs: [ tests-platform-specific, tests, static-analysis ]
+    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    container: shuwariafrica/el10-jdk:17
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Import signing key
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.OSS_PUBLISH_USER_SIGNING_KEY }}
+      - name: Set up Coursier cache
+        uses: coursier/cache-action@v8
+      - name: Publish
+        run: sbt -batch publishSigned
+        env:
+          SONATYPE_USERNAME: ${{ secrets.OSS_PUBLISH_USER }}
+          SONATYPE_PASSWORD: ${{ secrets.OSS_PUBLISH_USER_PASSPHRASE }}
+      - name: Release to Maven Central
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: sbt -batch sonaUpload sonaRelease
+        env:
+          SONATYPE_USERNAME: ${{ secrets.OSS_PUBLISH_USER }}
+          SONATYPE_PASSWORD: ${{ secrets.OSS_PUBLISH_USER_PASSPHRASE }}
+      - name: Mint Release Bot Token
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: release-bot
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ steps.release-bot.outputs.token }}
+        run: |
+          prerelease_flag=""
+          if [[ "${{ github.ref_name }}" == *-* ]]; then
+            prerelease_flag="--prerelease"
+          fi
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            --verify-tag \
+            $prerelease_flag
