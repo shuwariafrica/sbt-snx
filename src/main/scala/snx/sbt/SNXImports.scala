@@ -18,19 +18,19 @@
 package snx.sbt
 
 import sbt.SettingKey
+import sbt.TaskKey
 import sbt.librarymanagement.ModuleID
-import sbt.settingKey
 
-import snx.NativePlatform
-
-/** Types, settings, and syntax auto-imported into `build.sbt` by [[SnxPlugin$ SnxPlugin]]. */
-object SnxImports:
+/** Types, settings, and syntax auto-imported into `build.sbt` by [[SNXPlugin$ SNXPlugin]]. The settings and tasks live
+  * under [[SNXImports.SNX$ SNX]] so they never clash with sbt or Scala Native keys.
+  */
+object SNXImports:
 
   type TargetPlatform = snx.TargetPlatform
   val TargetPlatform: snx.TargetPlatform.type = snx.TargetPlatform
 
-  type Os = snx.Os
-  val Os: snx.Os.type = snx.Os
+  type OS = snx.OS
+  val OS: snx.OS.type = snx.OS
 
   type Arch = snx.Arch
   val Arch: snx.Arch.type = snx.Arch
@@ -41,8 +41,8 @@ object SnxImports:
   type LinuxLibc = snx.LinuxLibc
   val LinuxLibc: snx.LinuxLibc.type = snx.LinuxLibc
 
-  type WindowsAbi = snx.WindowsAbi
-  val WindowsAbi: snx.WindowsAbi.type = snx.WindowsAbi
+  type WindowsABI = snx.WindowsABI
+  val WindowsABI: snx.WindowsABI.type = snx.WindowsABI
 
   type NativeDependency = snx.sbt.NativeDependency
   val NativeDependency: snx.sbt.NativeDependency.type = snx.sbt.NativeDependency
@@ -65,32 +65,49 @@ object SnxImports:
   type Sanitizer = scala.scalanative.build.Sanitizer
   val Sanitizer: scala.scalanative.build.Sanitizer.type = scala.scalanative.build.Sanitizer
 
-  /** A per-platform `nativeConfig` transform; unmatched platforms contribute none. Element type of [[snxNative]]; see
+  /** A per-platform `nativeConfig` transform; unmatched platforms contribute none. Element type of [[SNX.config]]; see
     * [[nativeTransform]] to type a literal in a `+=`/`++=`.
     */
   type NativeTransform = PartialFunction[NativePlatform, NativeConfig => NativeConfig]
 
-  /** The build host's [[snx.TargetPlatform TargetPlatform]], from the `os.name` and `os.arch` system properties. */
-  lazy val host: TargetPlatform =
-    TargetPlatform.parse(sys.props.getOrElse("os.name", "").nn, sys.props.getOrElse("os.arch", "").nn)
-
-  /** The OS/arch target to classify and link for. Defaults to [[host]]. */
-  val snxTarget: SettingKey[TargetPlatform] =
-    settingKey("OS/arch target for classifier injection and per-platform linking (default: host).")
-
-  /** Per-platform native dependencies contributed for [[snxTarget]]. */
-  val platformDependencies: SettingKey[Seq[NativeDependency]] =
-    settingKey("Per-platform native dependencies (OS/arch classifier + per-platform native options).")
-
-  /** Publish this project's own artifact with the [[snxTarget]] OS/arch classifier, as an extra classified jar
-    * alongside the main artifact. Defaults to `false`.
+  /** Settings, tasks, and the build host of the sbt-native-extras plugin, namespaced to avoid clashing with sbt or
+    * Scala Native keys (for example sbt's own `target`).
     */
-  val snxClassified: SettingKey[Boolean] =
-    settingKey("Publish this project's artifact with the OS/arch classifier as an extra classified jar (default: false).")
+  object SNX:
 
-  /** Project-level per-platform `nativeConfig` transforms applied for the resolved platform. */
-  val snxNative: SettingKey[Seq[NativeTransform]] =
-    settingKey("Per-platform nativeConfig transforms applied for the resolved platform.")
+    /** The build host's [[snx.TargetPlatform TargetPlatform]], from the `os.name` and `os.arch` system properties. */
+    lazy val host: TargetPlatform =
+      TargetPlatform.parse(sys.props.getOrElse("os.name", "").nn, sys.props.getOrElse("os.arch", "").nn)
+
+    /** The OS/arch target to classify and link for. Defaults to [[host]]. */
+    val target: SettingKey[TargetPlatform] =
+      SettingKey[TargetPlatform]("snxTarget", "OS/arch target for classifier injection and per-platform linking (default: host).")
+
+    /** The platform resolved for [[target]] plus the toolchain libc/ABI, read from the Scala Native target triple (or
+      * the discovered clang). The match key per-platform settings condition on.
+      */
+    val platform: TaskKey[NativePlatform] =
+      TaskKey[NativePlatform]("snxPlatform", "Resolved native platform (target OS/arch plus toolchain libc/ABI).")
+
+    /** Per-platform native dependencies contributed for [[target]]. */
+    val dependencies: SettingKey[Seq[NativeDependency]] =
+      SettingKey[Seq[NativeDependency]](
+        "snxDependencies",
+        "Per-platform native dependencies (OS/arch classifier + per-platform native options).")
+
+    /** Project-level per-platform `nativeConfig` transforms applied for the resolved [[platform]]. */
+    val config: SettingKey[Seq[NativeTransform]] =
+      SettingKey[Seq[NativeTransform]]("snxConfig", "Per-platform nativeConfig transforms applied for the resolved platform.")
+
+    /** Publish this project's artifact with the [[target]] OS/arch classifier carrying the built native content, with a
+      * placeholder main artifact. Defaults to `false`.
+      */
+    val classified: SettingKey[Boolean] =
+      SettingKey[Boolean](
+        "snxClassified",
+        "Publish the built native content under the OS/arch classifier, with a placeholder main artifact (default: false).")
+
+  end SNX
 
   /** Lifts a `ModuleID` into a [[NativeDependency]]. */
   given Conversion[ModuleID, NativeDependency] = NativeDependency(_)
@@ -111,9 +128,9 @@ object SnxImports:
     /** Lift `module` as an unclassified (plain NIR) [[NativeDependency]]. */
     def plain: NativeDependency = NativeDependency(module).plain
 
-  /** Type a [[NativeTransform]] literal so it infers in a `snxNative +=`/`++=` (sbt's `Append` does not propagate the
-    * element type to a partial-function literal). A `snxNative :=` propagates it and needs no wrapper.
+  /** Type a [[NativeTransform]] literal so it infers in a `SNX.config +=`/`++=` (sbt's `Append` does not propagate the
+    * element type to a partial-function literal). A `SNX.config :=` propagates it and needs no wrapper.
     */
   def nativeTransform(transform: NativeTransform): NativeTransform = transform
 
-end SnxImports
+end SNXImports

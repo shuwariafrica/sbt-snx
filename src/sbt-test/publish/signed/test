@@ -8,3 +8,5 @@ $ exists target/repo/africa/shuwari/snxlib_native0.5_3/0.1.0/snxlib_native0.5_3-
 $ exists target/repo/africa/shuwari/snxlib_native0.5_3/0.1.0/snxlib_native0.5_3-0.1.0.pom.asc
 $ exists target/repo/africa/shuwari/snxlib_native0.5_3/0.1.0/snxlib_native0.5_3-0.1.0-sources.jar.asc
 $ exists target/repo/africa/shuwari/snxlib_native0.5_3/0.1.0/snxlib_native0.5_3-0.1.0-javadoc.jar.asc
+# The classified jar carries the built native content; the main artifact is a placeholder.
+> check

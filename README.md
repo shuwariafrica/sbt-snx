@@ -1,8 +1,9 @@
 # sbt-snx
 
 sbt-snx (sbt-native-extras) is an sbt 2.x plugin for Scala Native projects. It expresses per-platform
-native concerns - dependency resolution, linker and compiler options, and the native build configuration -
-as build settings keyed on a chosen OS/arch target and the toolchain's resolved C library or ABI.
+native concerns - dependency resolution, linker and compiler options, the native build configuration, and
+classified publishing - as build settings keyed on a chosen OS/arch target and the toolchain's resolved C
+library or ABI.
 
 ## Getting started
 
@@ -13,38 +14,40 @@ addSbtPlugin("africa.shuwari" % "sbt-snx" % "<version>")
 
 ```scala
 // build.sbt
-enablePlugins(ScalaNativePlugin, SnxPlugin)
+enablePlugins(SNXPlugin) // Will enable `ScalaNativePlugin` via sbt `AutoPlugin` resolution
 ```
 
-`SnxPlugin` requires `ScalaNativePlugin` and does not trigger on its own.
+Settings and tasks are namespaced under an `SNX` object; the contributed types (`TargetPlatform`, `NativePlatform`,
+`OS`, `Arch`, `NativeDependency`, ...) are auto-imported.
 
 ## Concepts
 
-`TargetPlatform` pairs an `Os` (`Linux`/`Osx`/`Windows`) with an `Arch` (`X86_64`/`Aarch64`) - the
+`TargetPlatform` pairs an `OS` (`Linux`/`Osx`/`Windows`) with an `Arch` (`X86_64`/`Aarch64`) - the
 setting-time coordinate you choose. `NativePlatform` is the task-time key you match on to condition the
 build: it adds the toolchain's C library or ABI, resolved from the native target triple (or the discovered
 clang), so each case exposes only the values valid for that OS - `Linux(arch, LinuxLibc)` with
-`Glibc`/`Musl`, `Osx(arch)`, and `Windows(arch, WindowsAbi)` with `Msvc`/`Mingw`. You set a
-`TargetPlatform`; you match on a `NativePlatform`.
+`Glibc`/`Musl`, `Osx(arch)`, and `Windows(arch, WindowsABI)` with `MSVC`/`MinGW`. You set a `TargetPlatform`;
+you match on a `NativePlatform`. The resolved value is available as the `SNX.platform` task.
 
 ## Targets
 
-`snxTarget` is the OS/arch to resolve and build for; it defaults to the build host. Override it to
+`SNX.target` is the OS/arch to resolve and build for; it defaults to the build host. Override it to
 cross-target:
 
 ```scala
-snxTarget := TargetPlatform(Os.Osx, Arch.Aarch64)
+SNX.target := TargetPlatform(OS.Osx, Arch.Aarch64)
 ```
 
-An unsupported operating system or architecture fails the build with `UnsupportedTargetException`.
+An unsupported operating system, architecture, or toolchain libc/ABI fails the build with
+`UnsupportedTargetException`.
 
 ## Native dependencies
 
-`platformDependencies` injects the `snxTarget` OS/arch classifier into each entry's coordinate and
-conditions its native options on the resolved `NativePlatform`:
+`SNX.dependencies` injects the `SNX.target` OS/arch classifier into each entry's coordinate and conditions
+its native options on the resolved `NativePlatform`:
 
 ```scala
-platformDependencies += "com.example" %% "blas" % "1.2"
+SNX.dependencies += "com.example" %% "blas" % "1.2"
 ```
 
 The bare form is classified; `.plain` leaves it unclassified, for platform-independent NIR. Attach
@@ -52,11 +55,11 @@ per-platform options by matching the resolved platform - `linking` for linker fl
 full additive bundle (`linking`, `compile`, `c`, `cpp`):
 
 ```scala
-platformDependencies += ("com.example" %% "uv" % "1.4" linking {
+SNX.dependencies += ("com.example" %% "uv" % "1.4" linking {
   case NativePlatform.Linux(_, _) => Seq("-luv")
 })
 
-platformDependencies += ("com.example" %% "ssl" % "3" options {
+SNX.dependencies += ("com.example" %% "ssl" % "3" options {
   case NativePlatform.Linux(_, LinuxLibc.Glibc) =>
     NativeDependency.Options.empty.withLinking("-lssl").withCompile("-I/opt/ssl/include")
 })
@@ -68,37 +71,52 @@ interoperable with native artefacts published under that convention.
 
 ## Project native configuration
 
-`snxNative` is a list of per-platform transforms over the Scala Native `NativeConfig`, applied for the
+`SNX.config` is a list of per-platform transforms over the Scala Native `NativeConfig`, applied for the
 resolved platform and inherited by the Compile and Test links. It is the place for whole-build settings -
 linker and compile options, `LTO`, `Mode`, `GC` - that no single dependency owns. Declare them with `:=`:
 
 ```scala
-snxNative := Seq(
+SNX.config := Seq(
   { case NativePlatform.Linux(_, LinuxLibc.Musl) => c => c.withLinkingOptions(c.linkingOptions :+ "-static") },
   { case NativePlatform.Osx(_)                   => _.withLTO(LTO.full) }
 )
 ```
 
-To add a transform incrementally, wrap the literal in `nativeTransform` so it types under `+=`; a bare
-`+=`/`++=` literal cannot infer its type, whereas `:=` can and covers declaring several platforms at once,
-so `++=` is never needed:
+For an incremental `+=`, wrap the literal in `nativeTransform` (a bare partial-function literal does not
+infer against `+=`):
 
 ```scala
-snxNative += nativeTransform {
-  case NativePlatform.Windows(_, WindowsAbi.Msvc) => _.withGC(GC.none)
+SNX.config += nativeTransform {
+  case NativePlatform.Windows(_, WindowsABI.MSVC) => _.withGC(GC.none)
 }
 ```
 
 `LTO`, `Mode`, `GC`, `BuildTarget`, and `Sanitizer` are auto-imported for use in transforms. Where several
 transforms match a platform, they compose in order, with scalar settings taking the last write.
 
+## Publishing
+
+`SNX.classified := true` publishes this project's built native content under the `SNX.target` OS/arch
+classifier, leaving the unclassified main artifact a placeholder. A per-platform NIR library is built once
+per target - each build pins `SNX.target` - and publishes the classified jar to the shared coordinate;
+consumers select the matching module through `SNX.dependencies`. Sources, javadoc, and the POM are published
+as usual.
+
+On sbt 2.0.0-RC14 the Ivy publish backend drops the Scala Native platform suffix from published artifact
+filenames, which Maven rejects (sbt/sbt#9117); the ivyless backend names them correctly. Unsigned `publish`
+can use the ivyless backend (`useIvy := false`, with a maven-style resolver); `publishSigned` (sbt-pgp) always
+uses the Ivy backend, so for signed releases bake the suffix into `moduleName` and disable further suffixing
+(`projectID / crossVersion := Disabled()`). The fix is tracked in sbt/sbt#9293.
+
 ## Settings
 
-| Setting | Type | Default |
-| --- | --- | --- |
-| `snxTarget` | `TargetPlatform` | the build host |
-| `platformDependencies` | `Seq[NativeDependency]` | empty |
-| `snxNative` | `Seq[NativeTransform]` | empty |
+| Setting            | Type                    | Default                                      |
+|--------------------|-------------------------|----------------------------------------------|
+| `SNX.target`       | `TargetPlatform`        | the build host                               |
+| `SNX.platform`     | `NativePlatform` (task) | resolved from `SNX.target` and the toolchain |
+| `SNX.dependencies` | `Seq[NativeDependency]` | empty                                        |
+| `SNX.config`       | `Seq[NativeTransform]`  | empty                                        |
+| `SNX.classified`   | `Boolean`               | `false`                                      |
 
 ## License
 

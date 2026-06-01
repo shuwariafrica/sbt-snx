@@ -17,31 +17,33 @@
  ****************************************************************/
 package snx
 
-/** The C library of a Linux toolchain. See [[LinuxLibc$ LinuxLibc]] to parse a target-triple environment component. */
+/** The C library of a Linux toolchain. See [[LinuxLibc$ LinuxLibc]] to map a target-triple environment component. */
 enum LinuxLibc:
   case Glibc, Musl
 
-/** Parser and equality instance for [[LinuxLibc]]. */
+/** Recogniser and equality instance for [[LinuxLibc]]. */
 object LinuxLibc:
   given CanEqual[LinuxLibc, LinuxLibc] = CanEqual.derived
 
-  /** Map a target-triple environment component to a Linux libc (`musl*` -> [[Musl]]; otherwise [[Glibc]], the `gnu`
-    * default).
-    */
-  def parse(env: String): LinuxLibc = if env.startsWith("musl") then Musl else Glibc
+  private[snx] def from(env: String): Option[LinuxLibc] =
+    if env.startsWith("musl") then Some(Musl)
+    else if env.startsWith("gnu") then Some(Glibc)
+    else None
 
-/** The C runtime ABI of a Windows toolchain. See [[WindowsAbi$ WindowsAbi]] to parse a target-triple environment
+/** The C runtime ABI of a Windows toolchain. See [[WindowsABI$ WindowsABI]] to map a target-triple environment
   * component.
   */
-enum WindowsAbi:
-  case Msvc, Mingw
+enum WindowsABI:
+  case MSVC, MinGW
 
-/** Parser and equality instance for [[WindowsAbi]]. */
-object WindowsAbi:
-  given CanEqual[WindowsAbi, WindowsAbi] = CanEqual.derived
+/** Recogniser and equality instance for [[WindowsABI]]. */
+object WindowsABI:
+  given CanEqual[WindowsABI, WindowsABI] = CanEqual.derived
 
-  /** Map a target-triple environment component to a Windows ABI (`gnu*` -> [[Mingw]]; otherwise [[Msvc]]). */
-  def parse(env: String): WindowsAbi = if env.startsWith("gnu") then Mingw else Msvc
+  private[snx] def from(env: String): Option[WindowsABI] =
+    if env.startsWith("gnu") then Some(MinGW)
+    else if env.startsWith("msvc") then Some(MSVC)
+    else None
 
 /** A fully-resolved native platform: a [[TargetPlatform]] plus the toolchain libc/ABI on operating systems where it
   * varies. The match key for per-platform linking, so a libc match offers only the values valid for that operating
@@ -50,14 +52,32 @@ object WindowsAbi:
 enum NativePlatform:
   case Linux(arch: Arch, libc: LinuxLibc)
   case Osx(arch: Arch)
-  case Windows(arch: Arch, abi: WindowsAbi)
+  case Windows(arch: Arch, abi: WindowsABI)
 
 /** Resolver and equality instance for [[NativePlatform]]. */
 object NativePlatform:
   given CanEqual[NativePlatform, NativePlatform] = CanEqual.derived
 
-  /** Resolve a [[TargetPlatform]] and a target-triple environment component into a [[NativePlatform]]. */
-  def parse(target: TargetPlatform, env: String): NativePlatform = target.os match
-    case Os.Linux   => Linux(target.arch, LinuxLibc.parse(env))
-    case Os.Osx     => Osx(target.arch)
-    case Os.Windows => Windows(target.arch, WindowsAbi.parse(env))
+  /** Resolve a [[TargetPlatform]] and a Scala Native target triple into a [[NativePlatform]], taking the toolchain
+    * libc/ABI from the triple's environment component.
+    *
+    * @throws UnsupportedTargetException
+    *   on Linux or Windows when the triple identifies no supported libc/ABI.
+    */
+  def parse(target: TargetPlatform, triple: String): NativePlatform = target.os match
+    case OS.Linux   => Linux(target.arch, resolve(triple, LinuxLibc.from, "Linux C library"))
+    case OS.Osx     => Osx(target.arch)
+    case OS.Windows => Windows(target.arch, resolve(triple, WindowsABI.from, "Windows ABI"))
+
+  // Mirrors scala-native's TargetTriple.parse: the environment is the fourth component, falling back to the third for a
+  // three-component `arch-os-env` triple.
+  private def environments(triple: String): List[String] =
+    val parts = triple.split("-", 4).nn.toList
+    List(parts.lift(3), parts.lift(2)).flatten.map(_.nn).filter(_.nonEmpty)
+
+  private def resolve[A](triple: String, from: String => Option[A], component: String): A =
+    environments(triple).flatMap(from).headOption.getOrElse(fail(component, triple))
+
+  private def fail(component: String, triple: String): Nothing =
+    throw UnsupportedTargetException(s"Unable to determine the $component from target triple: '$triple'") // scalafix:ok DisableSyntax.throw
+end NativePlatform
