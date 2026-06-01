@@ -18,61 +18,76 @@
 package snx.sbt
 
 import sbt.*
+import sbt.Keys.artifact
 import sbt.Keys.artifacts
 import sbt.Keys.configuration
+import sbt.Keys.fileConverter
 import sbt.Keys.libraryDependencies
 import sbt.Keys.moduleName
 import sbt.Keys.packageBin
 import sbt.Keys.packagedArtifacts
-import sbt.librarymanagement.Artifact
+import sbt.Keys.target
+import sbt.io.IO
+import xsbti.HashedVirtualFileRef
 
-import scala.scalanative.build.NativeConfig
+import java.util.jar.Manifest
+
 import scala.scalanative.sbtplugin.ScalaNativePlugin
 import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport.nativeConfig
 import scala.sys.process.Process
 
-import snx.NativePlatform
-import snx.TargetPlatform
-import snx.sbt.SnxImports.*
+import snx.sbt.SNXImports.*
 
 /** sbt plugin contributing OS/arch classifier injection and per-platform linking to a Scala Native project. See
-  * [[SnxImports$ SnxImports]] for the settings and syntax it adds to `build.sbt`.
+  * [[SNXImports$ SNXImports]] for the settings and syntax it adds to `build.sbt`.
   */
-object SnxPlugin extends AutoPlugin:
+object SNXPlugin extends AutoPlugin:
 
   override def requires: Plugins = ScalaNativePlugin
   override def trigger: PluginTrigger = noTrigger
 
-  val autoImport: SnxImports.type = SnxImports
+  val autoImport: SNXImports.type = SNXImports
 
   override def buildSettings: Seq[Setting[?]] = Seq(
-    snxTarget := host
+    SNX.target := SNX.host
   )
 
   override def projectSettings: Seq[Setting[?]] =
     Seq(
-      platformDependencies := Seq.empty,
-      snxNative := Seq.empty,
-      snxClassified := false,
+      SNX.dependencies := Seq.empty,
+      SNX.config := Seq.empty,
+      SNX.classified := false,
+      SNX.platform := Def.uncached {
+        val base = (ThisBuild / nativeConfig).value
+        val triple = base.targetTriple.getOrElse(clangTriple(base.clang))
+        NativePlatform.parse(SNX.target.value, triple)
+      },
       libraryDependencies ++= {
-        val target = snxTarget.value
-        platformDependencies.value.map(_.moduleID(target))
+        val resolved = SNX.target.value
+        SNX.dependencies.value.map(_.moduleID(resolved))
       },
       artifacts := {
         val base = artifacts.value
-        if snxClassified.value then base :+ Artifact(moduleName.value, "jar", "jar", snxTarget.value.classifier)
+        if SNX.classified.value then base :+ (Compile / packageBin / artifact).value.withClassifier(Some(SNX.target.value.classifier))
         else base
       },
       packagedArtifacts := Def.uncached {
         val base = packagedArtifacts.value
-        if snxClassified.value then
-          base.updated(Artifact(moduleName.value, "jar", "jar", snxTarget.value.classifier), (Compile / packageBin).value)
-        else base
+        if !SNX.classified.value then base
+        else
+          val converter = fileConverter.value
+          val mainArtifact = (Compile / packageBin / artifact).value
+          val content = (Compile / packageBin).value
+          val placeholderRef: HashedVirtualFileRef =
+            converter.toVirtualFile(placeholder(new File(target.value, s"snx/${moduleName.value}.jar"), moduleName.value).toPath.nn)
+          base
+            .updated(mainArtifact, placeholderRef)
+            .updated(mainArtifact.withClassifier(Some(SNX.target.value.classifier)), content)
       },
       nativeConfig := Def.uncached {
         val previous = nativeConfig.value
-        val platform = resolved(previous, snxTarget.value)
-        snxNative.value.foldLeft(previous)((cfg, transform) => transform.lift(platform).fold(cfg)(_(cfg)))
+        val resolved = SNX.platform.value
+        SNX.config.value.foldLeft(previous)((cfg, transform) => transform.lift(resolved).fold(cfg)(_(cfg)))
       }
     ) ++ inConfig(Compile)(dependencySettings) ++ inConfig(Test)(dependencySettings)
 
@@ -83,11 +98,11 @@ object SnxPlugin extends AutoPlugin:
   private def dependencySettings: Seq[Setting[?]] = Seq(
     nativeConfig := Def.uncached {
       val previous = nativeConfig.value
-      val platform = resolved(previous, snxTarget.value)
+      val resolved = SNX.platform.value
       val config = configuration.value.name
-      platformDependencies.value
+      SNX.dependencies.value
         .filter(dependency => visible(config, dependency.module))
-        .map(_.optionsFor(platform))
+        .map(_.optionsFor(resolved))
         .foldLeft(previous) { (cfg, options) =>
           cfg
             .withLinkingOptions(cfg.linkingOptions ++ options.linking)
@@ -98,24 +113,23 @@ object SnxPlugin extends AutoPlugin:
     }
   )
 
-  /** The resolved [[snx.NativePlatform NativePlatform]]: the target's os/arch plus the toolchain libc/ABI, taken from
-    * the configured target triple, else the discovered clang.
-    */
-  private def resolved(config: NativeConfig, target: TargetPlatform): NativePlatform =
-    val triple = config.targetTriple.getOrElse(clangTriple(config.clang))
-    NativePlatform.parse(target, environment(triple))
-
   private def clangTriple(clang: java.nio.file.Path): String =
     val output = Process(Seq(clang.toString, "--version")).!!
     output.linesIterator.find(_.startsWith("Target: ")).map(_.drop("Target: ".length)).getOrElse("")
 
-  /** The environment (libc/ABI) component of a target triple, mirroring Scala Native's parse (index 3, else 2 for a
-    * three-component `arch-os-env` triple).
+  // 1980-01-01T00:00:00Z, the earliest timestamp a zip entry can store; fixing it keeps the placeholder reproducible.
+  private val placeholderEpochMillis: Long = 315532800000L
+
+  /** Write a manifest-only placeholder jar standing in for the unclassified main artifact when the built native content
+    * is published under the OS/arch classifier instead.
     */
-  private def environment(triple: String): String =
-    val parts = triple.split("-", 4).nn
-    val index = if parts.length > 3 then 3 else 2
-    if parts.length > index then parts(index).nn else ""
+  private def placeholder(out: File, name: String): File =
+    val manifest = new Manifest()
+    val attributes = manifest.getMainAttributes.nn
+    attributes.putValue("Manifest-Version", "1.0")
+    attributes.putValue("Snx-Placeholder", s"$name: platform artefacts are published under OS/arch classifiers.")
+    IO.jar(Seq.empty[(File, String)], out, manifest, Some(placeholderEpochMillis))
+    out
 
   private val compileScoped = Set("compile", "provided", "optional", "system", "default")
   private val testExclusive = Set("runtime", "test")
@@ -149,4 +163,4 @@ object SnxPlugin extends AutoPlugin:
           .filter(_.nonEmpty)
           .toSet
 
-end SnxPlugin
+end SNXPlugin

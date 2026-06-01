@@ -17,10 +17,12 @@ concurrency:
 
 env:
   SBT_OPTS: "-Xmx4G -Xss4M -XX:ReservedCodeCacheSize=512M"
+  JDK_VERSION: "17"
+  LLVM_VERSION: "22"
 
 jobs:
   tests-platform-specific:
-    name: "[${{ matrix.os }}${{ matrix.env && format('({0})', matrix.env) || '' }}: ${{ matrix.arch }}] Platform dependent tests"
+    name: "[${{ matrix.os }}${{ matrix.env && format(' ({0})', matrix.env) || '' }}: ${{ matrix.arch }}] Platform dependent tests"
     strategy:
       fail-fast: false
       matrix:
@@ -29,11 +31,8 @@ jobs:
           - { os: linux, env: glibc, arch: aarch64, classifier: linux-aarch_64, runner: ubuntu-24.04-arm, dockerImage: "shuwariafrica/el10-jdk:17" }
           - { os: linux, env: musl, arch: x86_64, classifier: linux-x86_64, runner: ubuntu-24.04, dockerImage: "shuwariafrica/alpine-jdk:17" }
           - { os: linux, env: musl, arch: aarch64, classifier: linux-aarch_64, runner: ubuntu-24.04-arm, dockerImage: "shuwariafrica/alpine-jdk:17" }
-          - { os: osx, env: "", arch: x86_64, classifier: osx-x86_64, runner: macos-13 }
-          - { os: osx, env: "", arch: aarch64, classifier: osx-aarch_64, runner: macos-14 }
-          # Windows clang's ABI (msvc vs mingw) is the runner's, not guaranteed; the first CI run confirms
-          # `env`, so the ABI assertion is non-blocking until then.
-          - { os: windows, env: msvc, arch: x86_64, classifier: windows-x86_64, runner: windows-2022 }
+          - { os: osx, env: "", arch: aarch64, classifier: osx-aarch_64, runner: macos-26 }
+          - { os: windows, env: msvc, arch: x86_64, classifier: windows-x86_64, runner: windows-2025-vs2026 }
           - { os: windows, env: msvc, arch: aarch64, classifier: windows-aarch_64, runner: windows-11-arm }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -47,11 +46,35 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Set up Coursier cache
-        uses: coursier/cache-action@v8
-      - name: Set up sbt
+      - name: "[host] Set up Java"
+        if: ${{ !matrix.dockerImage }}
+        uses: actions/setup-java@v5
+        with:
+          distribution: microsoft
+          java-version: ${{ env.JDK_VERSION }}
+          check-latest: true
+      - name: "[host] Set up sbt"
         if: ${{ !matrix.dockerImage }}
         uses: sbt/setup-sbt@v1
+      - name: Set up Coursier cache
+        uses: coursier/cache-action@v8
+      - name: "[macOS] Install LLVM"
+        if: ${{ matrix.os == 'osx' }}
+        shell: bash
+        run: |
+          brew update
+          brew install "llvm@${LLVM_VERSION}"
+          echo "$(brew --prefix "llvm@${LLVM_VERSION}")/bin" >> "$GITHUB_PATH"
+      - name: "[Windows] Set up MSVC"
+        if: ${{ matrix.os == 'windows' }}
+        shell: pwsh
+        run: |
+          $arch = if ('${{ matrix.arch }}' -eq 'aarch64') { 'arm64' } else { 'amd64' }
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+                  -latest -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvarsall.bat`" $arch && set" |
+            ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') { "$($Matches[1])=$($Matches[2])" } } |
+            Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: "[${{ matrix.classifier }}${{ matrix.env && format(' ({0})', matrix.env) || '' }}]: Platform-specific scripted tests"
         shell: bash
         run: ./project/scripts/run-sbt.sh -batch "scripted platform/detect"

@@ -17,25 +17,25 @@
  ****************************************************************/
 package snx
 
-/** Operating-system axis of a native [[TargetPlatform]], carrying the classifier token it renders to. See [[Os$ Os]] to
+/** Operating-system axis of a native [[TargetPlatform]], carrying the classifier token it renders to. See [[OS$ OS]] to
   * parse an identifier.
   */
-enum Os(val token: String):
-  case Linux extends Os("linux")
-  case Osx extends Os("osx")
-  case Windows extends Os("windows")
+enum OS(val token: String):
+  case Linux extends OS("linux")
+  case Osx extends OS("osx")
+  case Windows extends OS("windows")
 
-/** Parser for [[Os]]. */
-object Os:
+/** Parser for [[OS]]. */
+object OS:
 
-  given CanEqual[Os, Os] = CanEqual.derived
+  given CanEqual[OS, OS] = CanEqual.derived
 
-  /** Parse a host `os.name` or a Scala Native target-triple operating-system component into a supported [[Os]].
+  /** Parse a host `os.name` or a Scala Native target-triple operating-system component into a supported [[OS]].
     *
     * @throws UnsupportedTargetException
     *   if `value` is not [[Linux]], [[Osx]], or [[Windows]].
     */
-  def parse(value: String): Os =
+  def parse(value: String): OS =
     val n = normalise(value)
     if n.startsWith("linux") then Linux
     else if n.startsWith("mac") || n.startsWith("osx") || n.startsWith("darwin") then Osx

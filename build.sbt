@@ -32,7 +32,7 @@ def packageSettings: Seq[Def.Setting[?]] = Seq(
 def scriptedSettings: Seq[Def.Setting[?]] = Seq(
   scriptedLaunchOpts ++= Seq("classifier", "os", "env").flatMap { axis =>
     sys.env.get(s"SNX_EXPECT_${axis.toUpperCase}").map(value => s"-Dsnx.expect.$axis=$value")
-  } ++ Seq("-Xmx1024M", s"-Dplugin.version=${version.value}"),
+  } ++ Seq("-Xmx1024M", s"-Dplugin.version=${version.value}", s"-Duser.home=${sys.props.getOrElse("user.home", "")}"),
   scriptedBufferLog := false,
   scripted / excludeFilter := {
     if (sys.env.contains("SNX_EXPECT_OS")) NothingFilter

@@ -19,10 +19,10 @@ package snx
 
 import java.util.Locale
 
-/** A native target: an [[Os]] paired with an [[Arch]]. See [[TargetPlatform$ TargetPlatform]] for construction,
+/** A native target: an [[OS]] paired with an [[Arch]]. See [[TargetPlatform$ TargetPlatform]] for construction,
   * parsing, and the `classifier` rendering.
   */
-final case class TargetPlatform(os: Os, arch: Arch)
+final case class TargetPlatform(os: OS, arch: Arch)
 
 /** Factory, parser, and `classifier` rendering for [[TargetPlatform]]. */
 object TargetPlatform:
@@ -35,7 +35,7 @@ object TargetPlatform:
     * @throws UnsupportedTargetException
     *   if either component is unsupported.
     */
-  def parse(os: String, arch: String): TargetPlatform = TargetPlatform(Os.parse(os), Arch.parse(arch))
+  def parse(os: String, arch: String): TargetPlatform = TargetPlatform(OS.parse(os), Arch.parse(arch))
 
   extension (target: TargetPlatform)
     /** The classifier `<os>-<arch>` (for example `osx-aarch_64`). */

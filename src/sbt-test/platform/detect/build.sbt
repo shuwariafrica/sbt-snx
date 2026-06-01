@@ -1,15 +1,15 @@
-enablePlugins(ScalaNativePlugin, SnxPlugin)
+enablePlugins(SNXPlugin)
 
 scalaVersion := "3.8.3"
 
-// snxTarget defaults to the host. The check asserts the plugin's host os/arch detection and its toolchain
+// SNX.target defaults to the host. The check asserts the plugin's host os/arch detection and its toolchain
 // libc/ABI resolution against the ground truth (snx.expect.{os,arch,env}) the build forwards from CI.
-snxNative := Seq({
+SNX.config := Seq({
   case NativePlatform.Linux(_, LinuxLibc.Glibc)    => c => c.withLinkingOptions(c.linkingOptions :+ "-lsnx-linux-glibc")
   case NativePlatform.Linux(_, LinuxLibc.Musl)     => c => c.withLinkingOptions(c.linkingOptions :+ "-lsnx-linux-musl")
   case NativePlatform.Osx(_)                       => c => c.withLinkingOptions(c.linkingOptions :+ "-lsnx-osx")
-  case NativePlatform.Windows(_, WindowsAbi.Msvc)  => c => c.withLinkingOptions(c.linkingOptions :+ "-lsnx-windows-msvc")
-  case NativePlatform.Windows(_, WindowsAbi.Mingw) => c => c.withLinkingOptions(c.linkingOptions :+ "-lsnx-windows-mingw")
+  case NativePlatform.Windows(_, WindowsABI.MSVC)  => c => c.withLinkingOptions(c.linkingOptions :+ "-lsnx-windows-msvc")
+  case NativePlatform.Windows(_, WindowsABI.MinGW) => c => c.withLinkingOptions(c.linkingOptions :+ "-lsnx-windows-mingw")
 })
 
 val flagFor = Map(
@@ -27,8 +27,8 @@ check := Def.uncached {
   val os = prop("os")
   val env = sys.props.getOrElse("snx.expect.env", "")
 
-  assert(host.classifier == classifier, s"host detection ${host.classifier} != $classifier")
-  assert(snxTarget.value.classifier == classifier, s"snxTarget ${snxTarget.value.classifier} != $classifier")
+  assert(SNX.host.classifier == classifier, s"host detection ${SNX.host.classifier} != $classifier")
+  assert(SNX.target.value.classifier == classifier, s"SNX.target ${SNX.target.value.classifier} != $classifier")
 
   val expected = flagFor.getOrElse((os, env), sys.error(s"unhandled ground truth: os=$os env=$env"))
   val flags = (Compile / nativeLink / nativeConfig).value.linkingOptions

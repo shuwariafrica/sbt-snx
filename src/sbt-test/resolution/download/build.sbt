@@ -1,12 +1,12 @@
-enablePlugins(ScalaNativePlugin, SnxPlugin)
+enablePlugins(SNXPlugin)
 
 scalaVersion := "3.8.3"
 
-snxTarget := TargetPlatform(Os.Linux, Arch.X86_64)
+SNX.target := TargetPlatform(OS.Linux, Arch.X86_64)
 
 // A real JVM artefact published with OS/arch classifiers, declared with `%` (no Scala/platform
 // suffix) and lifted bare via the given Conversion. Exercises a genuine classified-artefact download.
-platformDependencies += "io.netty" % "netty-transport-native-epoll" % "4.1.115.Final"
+SNX.dependencies += "io.netty" % "netty-transport-native-epoll" % "4.1.115.Final"
 
 val check = taskKey[Unit]("verify the injected classifier resolves a real artefact")
 check := {
