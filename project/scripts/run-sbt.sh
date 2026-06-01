@@ -17,7 +17,7 @@ if [[ -n "${SBT_PROPS:-}" ]]; then
 fi
 
 if [[ -z "${DOCKER_IMAGE:-}" ]]; then
-  exec sbt "${extra_args[@]}" "$@"
+  exec sbt ${extra_args[@]+"${extra_args[@]}"} "$@"
 fi
 
 mkdir -p "$HOME/.cache/coursier" "$HOME/.cache/sbt"
@@ -44,4 +44,4 @@ done
 # sub-build cannot resolve the plugin. Pin user.home to the writable per-UID HOME so both agree.
 exec docker run "${docker_args[@]}" --entrypoint sh "$DOCKER_IMAGE" -c \
   'mkdir -p "$HOME" && git config --global --add safe.directory "*" && exec sbt -Duser.home="$HOME" "$@"' \
-  sh "${extra_args[@]}" "$@"
+  sh ${extra_args[@]+"${extra_args[@]}"} "$@"
