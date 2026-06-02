@@ -38,6 +38,11 @@ cross-target:
 SNX.target := TargetPlatform(OS.Osx, Arch.Aarch64)
 ```
 
+`SNX.targets` is the set of targets the project declares support for; it defaults to the active `SNX.target`
+alone. A build still resolves and builds a single target - pin `SNX.target` per build, for example a CI matrix
+row - while `SNX.targets` records the full supported set. A `SNX.target` outside the declared set is allowed (a
+cross or development build) and noted at load.
+
 An unsupported operating system, architecture, or toolchain libc/ABI fails the build with
 `UnsupportedTargetException`.
 
@@ -113,6 +118,7 @@ uses the Ivy backend, so for signed releases bake the suffix into `moduleName` a
 | Setting            | Type                    | Default                                      |
 |--------------------|-------------------------|----------------------------------------------|
 | `SNX.target`       | `TargetPlatform`        | the build host                               |
+| `SNX.targets`      | `Seq[TargetPlatform]`   | the active `SNX.target` alone                |
 | `SNX.platform`     | `NativePlatform` (task) | resolved from `SNX.target` and the toolchain |
 | `SNX.dependencies` | `Seq[NativeDependency]` | empty                                        |
 | `SNX.config`       | `Seq[NativeTransform]`  | empty                                        |

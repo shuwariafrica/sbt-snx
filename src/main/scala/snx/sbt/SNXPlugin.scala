@@ -26,6 +26,7 @@ import sbt.Keys.libraryDependencies
 import sbt.Keys.moduleName
 import sbt.Keys.packageBin
 import sbt.Keys.packagedArtifacts
+import sbt.Keys.sLog
 import sbt.Keys.target
 import sbt.io.IO
 import xsbti.HashedVirtualFileRef
@@ -54,6 +55,7 @@ object SNXPlugin extends AutoPlugin:
 
   override def projectSettings: Seq[Setting[?]] =
     Seq(
+      SNX.targets := Seq(SNX.target.value),
       SNX.dependencies := Seq.empty,
       SNX.config := Seq.empty,
       SNX.classified := false,
@@ -63,6 +65,7 @@ object SNXPlugin extends AutoPlugin:
         NativePlatform.parse(SNX.target.value, triple)
       },
       libraryDependencies ++= {
+        targetNote.value
         val resolved = SNX.target.value
         SNX.dependencies.value.map(_.moduleID(resolved))
       },
@@ -112,6 +115,14 @@ object SNXPlugin extends AutoPlugin:
         }
     }
   )
+
+  private def targetNote: Def.Initialize[Unit] = Def.setting {
+    val target = SNX.target.value
+    val targets = SNX.targets.value
+    if !targets.contains(target) then
+      sLog.value.info(
+        s"SNX.target ${target.classifier} is not among the declared SNX.targets (${targets.map(_.classifier).mkString(", ")}).")
+  }
 
   private def clangTriple(clang: java.nio.file.Path): String =
     val output = Process(Seq(clang.toString, "--version")).!!

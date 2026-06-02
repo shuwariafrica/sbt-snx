@@ -83,6 +83,12 @@ object SNXImports:
     val target: SettingKey[TargetPlatform] =
       SettingKey[TargetPlatform]("snxTarget", "OS/arch target for classifier injection and per-platform linking (default: host).")
 
+    /** The OS/arch targets this project declares support for; defaults to the active [[target]] alone. The active
+      * [[target]] may lie outside this set (a cross or development build), which is allowed and noted at load.
+      */
+    val targets: SettingKey[Seq[TargetPlatform]] =
+      SettingKey[Seq[TargetPlatform]]("snxTargets", "Declared set of supported OS/arch targets (default: the active SNX.target).")
+
     /** The platform resolved for [[target]] plus the toolchain libc/ABI, read from the Scala Native target triple (or
       * the discovered clang). The match key per-platform settings condition on.
       */
