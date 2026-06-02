@@ -164,7 +164,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Import signing key
-        uses: crazy-max/ghaction-import-gpg@v6
+        uses: crazy-max/ghaction-import-gpg@v7
         with:
           gpg_private_key: ${{ secrets.OSS_PUBLISH_USER_SIGNING_KEY }}
       - name: Set up Coursier cache
