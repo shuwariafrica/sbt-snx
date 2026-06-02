@@ -1,10 +1,14 @@
-import sbt.Def
-
 scalaVersion := "3.8.3"
 name := "sbt-snx"
 organization := "africa.shuwari"
 startYear := Some(2026)
 homepage := Some(url("https://github.com/shuwariafrica/sbt-snx"))
+scmInfo := ScmInfo(
+  url("https://github.com/shuwariafrica/sbt-snx"),
+  "scm:git:https://github.com/shuwariafrica/sbt-snx.git",
+  Some("scm:git:git@github.com:shuwariafrica/sbt-snx.git")
+).some
+
 apacheLicensed
 Shuwari.organisationSettings
 packageSettings
