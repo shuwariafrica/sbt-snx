@@ -33,6 +33,7 @@ jobs:
           - { os: linux, env: musl, arch: aarch64, classifier: linux-aarch_64, runner: ubuntu-24.04-arm, dockerImage: "shuwariafrica/alpine-jdk:17" }
           - { os: osx, env: "", arch: aarch64, classifier: osx-aarch_64, runner: macos-26 }
           - { os: windows, env: msvc, arch: x86_64, classifier: windows-x86_64, runner: windows-2025-vs2026 }
+          - { os: windows, env: mingw, arch: x86_64, classifier: windows-x86_64, runner: windows-2025 }
           - { os: windows, env: msvc, arch: aarch64, classifier: windows-aarch_64, runner: windows-11-arm }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -66,7 +67,7 @@ jobs:
           brew install "llvm@${LLVM_VERSION}"
           echo "$(brew --prefix "llvm@${LLVM_VERSION}")/bin" >> "$GITHUB_PATH"
       - name: "[Windows] Set up MSVC"
-        if: ${{ matrix.os == 'windows' }}
+        if: ${{ matrix.os == 'windows' && matrix.env == 'msvc' }}
         shell: pwsh
         run: |
           $arch = if ('${{ matrix.arch }}' -eq 'aarch64') { 'arm64' } else { 'amd64' }
@@ -75,6 +76,15 @@ jobs:
           cmd /c "`"$vs\VC\Auxiliary\Build\vcvarsall.bat`" $arch && set" |
             ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') { "$($Matches[1])=$($Matches[2])" } } |
             Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: "[Windows] Set up MinGW (clang64)"
+        if: ${{ matrix.os == 'windows' && matrix.env == 'mingw' }}
+        shell: pwsh
+        run: |
+          # SN selects clang via LLVM_BIN (Discover.discover -> `where "$LLVM_BIN:clang.exe"`), so pointing it at the
+          # MSYS2 clang64 toolchain (which targets x86_64-w64-windows-gnu) forces the MinGW path and bypasses the
+          # MSVC-targeting system clang entirely. vcvarsall is intentionally NOT run for this cell.
+          C:\msys64\usr\bin\pacman -S --needed --noconfirm mingw-w64-clang-x86_64-toolchain
+          "LLVM_BIN=C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: "[${{ matrix.classifier }}${{ matrix.env && format(' ({0})', matrix.env) || '' }}]: Platform-specific scripted tests"
         shell: bash
         run: ./project/scripts/run-sbt.sh -batch "scripted platform/detect"
