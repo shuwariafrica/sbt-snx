@@ -1,0 +1,4 @@
+# In a native project matrix, only the native scalanative/resources-scalanative dirs are suffixed; shared dirs are not.
+> fooNative/check
+# With the switch off, the common resources-scalanative is still registered but no per-platform dirs are.
+> barNative/check

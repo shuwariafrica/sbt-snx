@@ -1,5 +1,3 @@
-import scala.scalanative.sbtplugin.ScalaNativeCrossVersion
-
 import java.util.jar.JarFile
 import scala.jdk.CollectionConverters.*
 
@@ -11,18 +9,11 @@ name := "snxlib"
 version := "0.1.0"
 
 SNX.target := TargetPlatform(OS.Linux, Arch.X86_64)
-SNX.classified := true
+SNX.Native / crossPaths := true
 
-// sbt/sbt#9117 workaround (fix tracked in sbt/sbt#9293). `publishSigned` (sbt-pgp) always uses the Ivy publish
-// backend - `useIvy := false` does NOT route it to the correct ivyless backend - and the Ivy backend drops the
-// platform suffix from published filenames, which Maven rejects. Bake the cross+platform suffix into the
-// module name (the single source every published filename derives from) and disable further suffixing, so the
-// filenames match the coordinate. (This is the #9117 workaround for the Ivy/signed backend.)
-moduleName := {
-  val base = moduleName.value
-  CrossVersion(ScalaNativeCrossVersion.binary, scalaVersion.value, scalaBinaryVersion.value).fold(base)(_(base))
-}
-projectID / crossVersion := Disabled()
+// sbt/sbt#9117 (fix tracked in sbt/sbt#9293): publishSigned uses the Ivy backend, which drops the platform
+// suffix from published filenames. The plugin's SNX.platformPublishSettings applies the workaround.
+SNX.platformPublishSettings
 
 // Host gpg signs (sbt-pgp default); the environment must provide a signing key (CI: disposable key, isolated GNUPGHOME).
 publishTo := Some("test" at (baseDirectory.value / "target" / "repo").toURI.toString)

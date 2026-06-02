@@ -34,12 +34,21 @@ SNX.config := Seq({
 SNX.config += nativeTransform { case NativePlatform.Linux(_, _) => c => c.withCompileOptions(c.compileOptions :+ "-DPROJ2") }
 
 val check = taskKey[Unit]("verify classifier injection, per-config linking, and the redesigned API (construction-level)")
-check := {
+check := Def.uncached {
   def classifierOf(n: String): Option[String] =
     libraryDependencies.value.find(_.name == n).toSeq.flatMap(_.explicitArtifacts).flatMap(_.classifier).headOption
   assert(classifierOf("blas").contains("linux-x86_64"), s"blas (bare lift): ${classifierOf("blas")}")
   assert(classifierOf("uv").contains("linux-x86_64"), s"uv: ${classifierOf("uv")}")
   assert(classifierOf("headers").isEmpty, s"headers should be plain: ${classifierOf("headers")}")
+
+  // SNX.targets defaults to the active target alone, so the active target is always a member by default.
+  assert(SNX.targets.value == Seq(TargetPlatform(OS.Linux, Arch.X86_64)), s"default SNX.targets: ${SNX.targets.value}")
+  assert(SNX.targets.value.contains(SNX.target.value), s"active target absent from default SNX.targets: ${SNX.targets.value}")
+
+  // SNX.Native / crossPaths defaults to false here, so no per-platform source/resource dirs are injected.
+  assert(
+    !(Compile / unmanagedSourceDirectories).value.map(_.getName).contains("scala-linux"),
+    s"platform dirs injected with the switch off: ${(Compile / unmanagedSourceDirectories).value.map(_.getName)}")
 
   // Consumed scope = <config> / nativeLink / nativeConfig (running platform/libc detection via clang).
   val compileFlags = (Compile / nativeLink / nativeConfig).value.linkingOptions

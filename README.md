@@ -38,6 +38,11 @@ cross-target:
 SNX.target := TargetPlatform(OS.Osx, Arch.Aarch64)
 ```
 
+`SNX.targets` is the set of targets the project declares support for; it defaults to the active `SNX.target`
+alone. A build still resolves and builds a single target - pin `SNX.target` per build, for example a CI matrix
+row - while `SNX.targets` records the full supported set. A `SNX.target` outside the declared set is allowed (a
+cross or development build) and noted at load.
+
 An unsupported operating system, architecture, or toolchain libc/ABI fails the build with
 `UnsupportedTargetException`.
 
@@ -94,29 +99,75 @@ SNX.config += nativeTransform {
 `LTO`, `Mode`, `GC`, `BuildTarget`, and `Sanitizer` are auto-imported for use in transforms. Where several
 transforms match a platform, they compose in order, with scalar settings taking the last write.
 
+## Per-platform sources and resources
+
+When `SNX.Native / crossPaths` is `true` (see [Platform-specific projects](#platform-specific-projects)),
+sbt-snx registers per-platform source and resource directories for the active `SNX.target` - only the active
+target's, so platform code paths never co-compile. Absent directories are ignored.
+
+In a plain Scala Native project the `scala`/`resources` directories are themselves native, so each gains `-<os>`
+and `-<os>-<arch>` siblings (the `crossPaths` version dimension is carried):
+
+```text
+src/main/scala-linux            src/main/scala-linux-x86_64
+src/main/scala-3-linux          src/main/scala-3-linux-x86_64
+src/main/resources-linux        src/main/resources-linux-x86_64
+```
+
+In a native project matrix the platform-agnostic `scala`/`resources` are left untouched. The native
+`scalanative` source directory (which the matrix provides) gains the suffixes; for resources - where sbt has no
+native equivalent - sbt-snx registers a `resources-scalanative` directory (always, in a matrix) and suffixes it:
+
+```text
+src/main/scalanative-linux              src/main/scalanative-linux-x86_64
+src/main/resources-scalanative-linux    src/main/resources-scalanative-linux-x86_64
+src/main/resources-scalanative          (the native common dir, registered whenever the project is a matrix)
+```
+
+Native `.c`/`.cpp`/`.S` placed under a resource directory's `scala-native/` subdir (for example
+`src/main/resources-linux/scala-native/`) are compiled into the link by the Scala Native toolchain;
+platform-agnostic native code uses the standard `src/main/resources/scala-native/`.
+
+## Platform-specific projects
+
+A platform-specific project - one whose sources, resources, or published artifact differ by OS/arch - is
+marked with `SNX.Native / crossPaths := true`:
+
+```scala
+SNX.Native / crossPaths := true
+```
+
+This single switch enables the per-platform source and resource directories above and the classified publishing
+below. It defaults to `false`; a plain, platform-independent NIR library needs neither.
+
 ## Publishing
 
-`SNX.classified := true` publishes this project's built native content under the `SNX.target` OS/arch
-classifier, leaving the unclassified main artifact a placeholder. A per-platform NIR library is built once
-per target - each build pins `SNX.target` - and publishes the classified jar to the shared coordinate;
+With `SNX.Native / crossPaths := true`, this project publishes its built native content under the `SNX.target`
+OS/arch classifier, leaving the unclassified main artifact a placeholder. A per-platform NIR library is built
+once per target - each build pins `SNX.target` - and publishes the classified jar to the shared coordinate;
 consumers select the matching module through `SNX.dependencies`. Sources, javadoc, and the POM are published
 as usual.
 
-On sbt 2.0.0-RC14 the Ivy publish backend drops the Scala Native platform suffix from published artifact
-filenames, which Maven rejects (sbt/sbt#9117); the ivyless backend names them correctly. Unsigned `publish`
-can use the ivyless backend (`useIvy := false`, with a maven-style resolver); `publishSigned` (sbt-pgp) always
-uses the Ivy backend, so for signed releases bake the suffix into `moduleName` and disable further suffixing
-(`projectID / crossVersion := Disabled()`). The fix is tracked in sbt/sbt#9293.
+On sbt 2.0.0-RC14 the Ivy publish backend - which `publishSigned` (sbt-pgp) always uses - drops the Scala Native
+platform suffix from published artifact filenames, which Maven rejects (sbt/sbt#9117). Apply
+`SNX.platformPublishSettings` to bake the suffix into the published coordinate so the filenames are correct:
+
+```scala
+lazy val mylib = project.enablePlugins(SNXPlugin).settings(SNX.platformPublishSettings)
+```
+
+These settings are a temporary workaround; remove them once the upstream fix (sbt/sbt#9293) ships.
 
 ## Settings
 
-| Setting            | Type                    | Default                                      |
-|--------------------|-------------------------|----------------------------------------------|
-| `SNX.target`       | `TargetPlatform`        | the build host                               |
-| `SNX.platform`     | `NativePlatform` (task) | resolved from `SNX.target` and the toolchain |
-| `SNX.dependencies` | `Seq[NativeDependency]` | empty                                        |
-| `SNX.config`       | `Seq[NativeTransform]`  | empty                                        |
-| `SNX.classified`   | `Boolean`               | `false`                                      |
+| Setting                   | Type                    | Default                                      |
+|---------------------------|-------------------------|----------------------------------------------|
+| `SNX.target`              | `TargetPlatform`        | the build host                               |
+| `SNX.targets`             | `Seq[TargetPlatform]`   | the active `SNX.target` alone                |
+| `SNX.platform`            | `NativePlatform` (task) | resolved from `SNX.target` and the toolchain |
+| `SNX.dependencies`        | `Seq[NativeDependency]` | empty                                        |
+| `SNX.config`              | `Seq[NativeTransform]`  | empty                                        |
+| `SNX.Native / crossPaths` | `Boolean`               | `false`                                      |
 
 ## License
 

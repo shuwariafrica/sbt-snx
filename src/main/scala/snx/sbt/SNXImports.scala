@@ -17,9 +17,20 @@
  ****************************************************************/
 package snx.sbt
 
+import sbt.Configuration
+import sbt.CrossVersion
+import sbt.Disabled
+import sbt.Keys.crossVersion
+import sbt.Keys.moduleName
+import sbt.Keys.projectID
+import sbt.Keys.scalaBinaryVersion
+import sbt.Keys.scalaVersion
+import sbt.Setting
 import sbt.SettingKey
 import sbt.TaskKey
 import sbt.librarymanagement.ModuleID
+
+import scala.scalanative.sbtplugin.ScalaNativeCrossVersion
 
 /** Types, settings, and syntax auto-imported into `build.sbt` by [[SNXPlugin$ SNXPlugin]]. The settings and tasks live
   * under [[SNXImports.SNX$ SNX]] so they never clash with sbt or Scala Native keys.
@@ -83,6 +94,12 @@ object SNXImports:
     val target: SettingKey[TargetPlatform] =
       SettingKey[TargetPlatform]("snxTarget", "OS/arch target for classifier injection and per-platform linking (default: host).")
 
+    /** The OS/arch targets this project declares support for; defaults to the active [[target]] alone. The active
+      * [[target]] may lie outside this set (a cross or development build), which is allowed and noted at load.
+      */
+    val targets: SettingKey[Seq[TargetPlatform]] =
+      SettingKey[Seq[TargetPlatform]]("snxTargets", "Declared set of supported OS/arch targets (default: the active SNX.target).")
+
     /** The platform resolved for [[target]] plus the toolchain libc/ABI, read from the Scala Native target triple (or
       * the discovered clang). The match key per-platform settings condition on.
       */
@@ -99,13 +116,21 @@ object SNXImports:
     val config: SettingKey[Seq[NativeTransform]] =
       SettingKey[Seq[NativeTransform]]("snxConfig", "Per-platform nativeConfig transforms applied for the resolved platform.")
 
-    /** Publish this project's artifact with the [[target]] OS/arch classifier carrying the built native content, with a
-      * placeholder main artifact. Defaults to `false`.
+    /** Configuration namespace for sbt-native-extras. `SNX.Native / crossPaths` is the platform-specific switch:
+      * when true, per-platform source and resource directories are registered and the project publishes its native
+      * content under the OS/arch classifier (with a placeholder main artifact). Defaults to `false`.
       */
-    val classified: SettingKey[Boolean] =
-      SettingKey[Boolean](
-        "snxClassified",
-        "Publish the built native content under the OS/arch classifier, with a placeholder main artifact (default: false).")
+    val Native: Configuration = sbt.config("native")
+
+    /** Settings that work around sbt/sbt#9117, where the Ivy (and so signed) publish backend drops the Scala Native
+      * platform suffix from published artifact filenames - which Maven rejects. Apply to a project that publishes
+      * platform-suffixed native artifacts: `.settings(SNX.platformPublishSettings)`. Remove once sbt/sbt#9293 ships.
+      */
+    def platformPublishSettings: Seq[Setting[?]] = Seq(
+      moduleName := CrossVersion(ScalaNativeCrossVersion.binary, scalaVersion.value, scalaBinaryVersion.value)
+        .fold(moduleName.value)(_(moduleName.value)),
+      projectID / crossVersion := Disabled()
+    )
 
   end SNX
 
