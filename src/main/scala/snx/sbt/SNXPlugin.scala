@@ -24,18 +24,24 @@ import sbt.Keys.configuration
 import sbt.Keys.crossPaths
 import sbt.Keys.fileConverter
 import sbt.Keys.libraryDependencies
+import sbt.Keys.libraryDependencySchemes
 import sbt.Keys.moduleName
 import sbt.Keys.packageBin
 import sbt.Keys.packagedArtifacts
 import sbt.Keys.sLog
+import sbt.Keys.scalaBinaryVersion
+import sbt.Keys.scalaVersion
+import sbt.Keys.sourceDirectory
 import sbt.Keys.target
 import sbt.Keys.unmanagedResourceDirectories
 import sbt.Keys.unmanagedSourceDirectories
+import sbt.Keys.virtualAxes
 import sbt.io.IO
 import xsbti.HashedVirtualFileRef
 
 import java.util.jar.Manifest
 
+import scala.scalanative.sbtplugin.ScalaNativeCrossVersion
 import scala.scalanative.sbtplugin.ScalaNativePlugin
 import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport.nativeConfig
 import scala.sys.process.Process
@@ -71,6 +77,11 @@ object SNXPlugin extends AutoPlugin:
         targetNote.value
         val resolved = SNX.target.value
         SNX.dependencies.value.map(_.moduleID(resolved))
+      },
+      libraryDependencySchemes += {
+        val name = CrossVersion(ScalaNativeCrossVersion.binary, scalaVersion.value, scalaBinaryVersion.value)
+          .fold("test-interface")(_("test-interface"))
+        "org.scala-native" % name % "always"
       },
       artifacts := {
         val base = artifacts.value
@@ -122,13 +133,38 @@ object SNXPlugin extends AutoPlugin:
   )
 
   private def pathSettings: Seq[Setting[?]] = Seq(
-    unmanagedSourceDirectories ++= platformDirs(unmanagedSourceDirectories.value, SNX.target.value, (SNX.Native / crossPaths).value),
-    unmanagedResourceDirectories ++= platformDirs(unmanagedResourceDirectories.value, SNX.target.value, (SNX.Native / crossPaths).value)
+    unmanagedSourceDirectories ++= {
+      val matrix = virtualAxes.?.value.exists(_.exists(_.directorySuffix == "native"))
+      sourceDirs(unmanagedSourceDirectories.value, matrix, SNX.target.value, (SNX.Native / crossPaths).value)
+    },
+    unmanagedResourceDirectories ++= {
+      val matrix = virtualAxes.?.value.exists(_.exists(_.directorySuffix == "native"))
+      resourceDirs(sourceDirectory.value, unmanagedResourceDirectories.value, matrix, SNX.target.value, (SNX.Native / crossPaths).value)
+    }
   )
 
-  private def platformDirs(base: Seq[File], target: TargetPlatform, enabled: Boolean): Seq[File] =
+  private def sourceDirs(base: Seq[File], matrix: Boolean, target: TargetPlatform, enabled: Boolean): Seq[File] =
     if !enabled then Nil
-    else base.flatMap(dir => Seq(target.os.token, target.classifier).map(suffix => new File(s"${dir.getPath}-$suffix")))
+    else (if matrix then base.flatMap(nativeSibling) else base).flatMap(suffixes(_, target))
+
+  private def resourceDirs(sourceDir: File, base: Seq[File], matrix: Boolean, target: TargetPlatform, enabled: Boolean): Seq[File] =
+    if matrix then
+      val common = new File(sourceDir, "resources-scalanative")
+      common +: (if enabled then suffixes(common, target) else Nil)
+    else if enabled then base.flatMap(suffixes(_, target))
+    else Nil
+
+  /** The native sibling of a shared `scala`/`java` source directory (for example `scala-3` -> `scalanative-3`); other
+    * directories have none.
+    */
+  private def nativeSibling(dir: File): Option[File] =
+    val name = dir.getName.nn
+    if name.startsWith("scala") then Some(new File(dir.getParentFile.nn, s"scalanative${name.stripPrefix("scala")}"))
+    else if name.startsWith("java") then Some(new File(dir.getParentFile.nn, s"javanative${name.stripPrefix("java")}"))
+    else None
+
+  private def suffixes(dir: File, target: TargetPlatform): Seq[File] =
+    Seq(target.os.token, target.classifier).map(suffix => new File(s"${dir.getPath}-$suffix"))
 
   private def targetNote: Def.Initialize[Unit] = Def.setting {
     val target = SNX.target.value

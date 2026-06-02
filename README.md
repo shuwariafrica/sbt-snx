@@ -103,11 +103,10 @@ transforms match a platform, they compose in order, with scalar settings taking 
 
 When `SNX.Native / crossPaths` is `true` (see [Platform-specific projects](#platform-specific-projects)),
 sbt-snx registers per-platform source and resource directories for the active `SNX.target` - only the active
-target's, so platform code paths never co-compile. Each existing source **and** resource directory gains
-`-<os>` and `-<os>-<arch>` siblings, derived from whatever the build resolved; absent directories are ignored.
+target's, so platform code paths never co-compile. Absent directories are ignored.
 
-Sources and resources are handled identically. A plain Scala Native project (where `scala`/`resources` are
-already the native directories) therefore yields:
+In a plain Scala Native project the `scala`/`resources` directories are themselves native, so each gains `-<os>`
+and `-<os>-<arch>` siblings (the `crossPaths` version dimension is carried):
 
 ```text
 src/main/scala-linux            src/main/scala-linux-x86_64
@@ -115,8 +114,15 @@ src/main/scala-3-linux          src/main/scala-3-linux-x86_64
 src/main/resources-linux        src/main/resources-linux-x86_64
 ```
 
-In a native project matrix the same suffixing applies to the matrix's `scalanative`/`resources-scalanative`
-directories (`scalanative-linux`, `resources-scalanative-linux`, and so on) - nothing is hardcoded.
+In a native project matrix the platform-agnostic `scala`/`resources` are left untouched. The native
+`scalanative` source directory (which the matrix provides) gains the suffixes; for resources - where sbt has no
+native equivalent - sbt-snx registers a `resources-scalanative` directory (always, in a matrix) and suffixes it:
+
+```text
+src/main/scalanative-linux              src/main/scalanative-linux-x86_64
+src/main/resources-scalanative-linux    src/main/resources-scalanative-linux-x86_64
+src/main/resources-scalanative          (the native common dir, registered whenever the project is a matrix)
+```
 
 Native `.c`/`.cpp`/`.S` placed under a resource directory's `scala-native/` subdir (for example
 `src/main/resources-linux/scala-native/`) are compiled into the link by the Scala Native toolchain;
@@ -142,11 +148,15 @@ once per target - each build pins `SNX.target` - and publishes the classified ja
 consumers select the matching module through `SNX.dependencies`. Sources, javadoc, and the POM are published
 as usual.
 
-On sbt 2.0.0-RC14 the Ivy publish backend drops the Scala Native platform suffix from published artifact
-filenames, which Maven rejects (sbt/sbt#9117); the ivyless backend names them correctly. Unsigned `publish`
-can use the ivyless backend (`useIvy := false`, with a maven-style resolver); `publishSigned` (sbt-pgp) always
-uses the Ivy backend, so for signed releases bake the suffix into `moduleName` and disable further suffixing
-(`projectID / crossVersion := Disabled()`). The fix is tracked in sbt/sbt#9293.
+On sbt 2.0.0-RC14 the Ivy publish backend - which `publishSigned` (sbt-pgp) always uses - drops the Scala Native
+platform suffix from published artifact filenames, which Maven rejects (sbt/sbt#9117). Apply
+`SNX.platformPublishSettings` to bake the suffix into the published coordinate so the filenames are correct:
+
+```scala
+lazy val mylib = project.enablePlugins(SNXPlugin).settings(SNX.platformPublishSettings)
+```
+
+These settings are a temporary workaround; remove them once the upstream fix (sbt/sbt#9293) ships.
 
 ## Settings
 
