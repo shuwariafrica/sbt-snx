@@ -45,6 +45,11 @@ check := Def.uncached {
   assert(SNX.targets.value == Seq(TargetPlatform(OS.Linux, Arch.X86_64)), s"default SNX.targets: ${SNX.targets.value}")
   assert(SNX.targets.value.contains(SNX.target.value), s"active target absent from default SNX.targets: ${SNX.targets.value}")
 
+  // SNX.Native / crossPaths defaults to false here, so no per-platform source/resource dirs are injected.
+  assert(
+    !(Compile / unmanagedSourceDirectories).value.map(_.getName).contains("scala-linux"),
+    s"platform dirs injected with the switch off: ${(Compile / unmanagedSourceDirectories).value.map(_.getName)}")
+
   // Consumed scope = <config> / nativeLink / nativeConfig (running platform/libc detection via clang).
   val compileFlags = (Compile / nativeLink / nativeConfig).value.linkingOptions
   val testFlags = (Test / nativeLink / nativeConfig).value.linkingOptions

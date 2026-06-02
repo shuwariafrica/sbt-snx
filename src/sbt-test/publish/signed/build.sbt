@@ -11,7 +11,7 @@ name := "snxlib"
 version := "0.1.0"
 
 SNX.target := TargetPlatform(OS.Linux, Arch.X86_64)
-SNX.classified := true
+SNX.Native / crossPaths := true
 
 // sbt/sbt#9117 workaround (fix tracked in sbt/sbt#9293). `publishSigned` (sbt-pgp) always uses the Ivy publish
 // backend - `useIvy := false` does NOT route it to the correct ivyless backend - and the Ivy backend drops the

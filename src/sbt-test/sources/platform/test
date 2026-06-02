@@ -1,0 +1,3 @@
+# The active target's per-platform source dir compiles and its per-platform .c links.
+> check
+> Compile/nativeLink

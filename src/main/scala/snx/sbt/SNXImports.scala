@@ -17,6 +17,7 @@
  ****************************************************************/
 package snx.sbt
 
+import sbt.Configuration
 import sbt.SettingKey
 import sbt.TaskKey
 import sbt.librarymanagement.ModuleID
@@ -105,13 +106,11 @@ object SNXImports:
     val config: SettingKey[Seq[NativeTransform]] =
       SettingKey[Seq[NativeTransform]]("snxConfig", "Per-platform nativeConfig transforms applied for the resolved platform.")
 
-    /** Publish this project's artifact with the [[target]] OS/arch classifier carrying the built native content, with a
-      * placeholder main artifact. Defaults to `false`.
+    /** Configuration namespace for sbt-native-extras. `SNX.Native / crossPaths` is the platform-specific switch:
+      * when true, per-platform source and resource directories are registered and the project publishes its native
+      * content under the OS/arch classifier (with a placeholder main artifact). Defaults to `false`.
       */
-    val classified: SettingKey[Boolean] =
-      SettingKey[Boolean](
-        "snxClassified",
-        "Publish the built native content under the OS/arch classifier, with a placeholder main artifact (default: false).")
+    val Native: Configuration = sbt.config("native")
 
   end SNX
 

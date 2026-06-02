@@ -21,6 +21,7 @@ import sbt.*
 import sbt.Keys.artifact
 import sbt.Keys.artifacts
 import sbt.Keys.configuration
+import sbt.Keys.crossPaths
 import sbt.Keys.fileConverter
 import sbt.Keys.libraryDependencies
 import sbt.Keys.moduleName
@@ -28,6 +29,8 @@ import sbt.Keys.packageBin
 import sbt.Keys.packagedArtifacts
 import sbt.Keys.sLog
 import sbt.Keys.target
+import sbt.Keys.unmanagedResourceDirectories
+import sbt.Keys.unmanagedSourceDirectories
 import sbt.io.IO
 import xsbti.HashedVirtualFileRef
 
@@ -58,7 +61,7 @@ object SNXPlugin extends AutoPlugin:
       SNX.targets := Seq(SNX.target.value),
       SNX.dependencies := Seq.empty,
       SNX.config := Seq.empty,
-      SNX.classified := false,
+      SNX.Native / crossPaths := false,
       SNX.platform := Def.uncached {
         val base = (ThisBuild / nativeConfig).value
         val triple = base.targetTriple.getOrElse(clangTriple(base.clang))
@@ -71,12 +74,13 @@ object SNXPlugin extends AutoPlugin:
       },
       artifacts := {
         val base = artifacts.value
-        if SNX.classified.value then base :+ (Compile / packageBin / artifact).value.withClassifier(Some(SNX.target.value.classifier))
+        if (SNX.Native / crossPaths).value then
+          base :+ (Compile / packageBin / artifact).value.withClassifier(Some(SNX.target.value.classifier))
         else base
       },
       packagedArtifacts := Def.uncached {
         val base = packagedArtifacts.value
-        if !SNX.classified.value then base
+        if !(SNX.Native / crossPaths).value then base
         else
           val converter = fileConverter.value
           val mainArtifact = (Compile / packageBin / artifact).value
@@ -92,7 +96,8 @@ object SNXPlugin extends AutoPlugin:
         val resolved = SNX.platform.value
         SNX.config.value.foldLeft(previous)((cfg, transform) => transform.lift(resolved).fold(cfg)(_(cfg)))
       }
-    ) ++ inConfig(Compile)(dependencySettings) ++ inConfig(Test)(dependencySettings)
+    ) ++ inConfig(Compile)(dependencySettings) ++ inConfig(Test)(dependencySettings) ++
+      inConfig(Compile)(pathSettings) ++ inConfig(Test)(pathSettings)
 
   /** Per-configuration dependency options. A dependency contributes only where its configuration is visible to the
     * enclosing one (`Compile`-visible in Compile; `Runtime`/`Test`-only in Test, since Compile-visible options arrive
@@ -115,6 +120,15 @@ object SNXPlugin extends AutoPlugin:
         }
     }
   )
+
+  private def pathSettings: Seq[Setting[?]] = Seq(
+    unmanagedSourceDirectories ++= platformDirs(unmanagedSourceDirectories.value, SNX.target.value, (SNX.Native / crossPaths).value),
+    unmanagedResourceDirectories ++= platformDirs(unmanagedResourceDirectories.value, SNX.target.value, (SNX.Native / crossPaths).value)
+  )
+
+  private def platformDirs(base: Seq[File], target: TargetPlatform, enabled: Boolean): Seq[File] =
+    if !enabled then Nil
+    else base.flatMap(dir => Seq(target.os.token, target.classifier).map(suffix => new File(s"${dir.getPath}-$suffix")))
 
   private def targetNote: Def.Initialize[Unit] = Def.setting {
     val target = SNX.target.value
