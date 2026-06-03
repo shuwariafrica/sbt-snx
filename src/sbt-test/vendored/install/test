@@ -1,0 +1,2 @@
+# A CMake project with no install() rules stages nothing under the prefix; the vendored build must fail clearly.
+-> snxVendoredArtefacts

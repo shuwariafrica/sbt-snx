@@ -58,6 +58,18 @@ object SNXImports:
   type NativeDependency = snx.sbt.NativeDependency
   val NativeDependency: snx.sbt.NativeDependency.type = snx.sbt.NativeDependency
 
+  type NativeOptions = snx.sbt.NativeOptions
+  val NativeOptions: snx.sbt.NativeOptions.type = snx.sbt.NativeOptions
+
+  type NativeSource = snx.sbt.NativeSource
+  val NativeSource: snx.sbt.NativeSource.type = snx.sbt.NativeSource
+
+  type NativeBackend = snx.sbt.NativeBackend
+  val NativeBackend: snx.sbt.NativeBackend.type = snx.sbt.NativeBackend
+
+  type NativeArtefacts = snx.sbt.NativeArtefacts
+  val NativeArtefacts: snx.sbt.NativeArtefacts.type = snx.sbt.NativeArtefacts
+
   type NativeConfig = scala.scalanative.build.NativeConfig
   val NativeConfig: scala.scalanative.build.NativeConfig.type = scala.scalanative.build.NativeConfig
 
@@ -116,6 +128,20 @@ object SNXImports:
     val config: SettingKey[Seq[NativeTransform]] =
       SettingKey[Seq[NativeTransform]]("snxConfig", "Per-platform nativeConfig transforms applied for the resolved platform.")
 
+    /** Native libraries built from source (`Git`/`Local`) or linked from the system, for [[target]]; see
+      * [[NativeSource]]. Built by [[vendoredArtefacts]] and folded into `nativeConfig`.
+      */
+    val vendored: SettingKey[Seq[NativeSource]] =
+      SettingKey[Seq[NativeSource]]("snxVendored", "Native libraries built from source or linked from the system.")
+
+    /** The built [[vendored]] libraries - archives to link and include directories to expose - for the resolved
+      * [[platform]].
+      */
+    val vendoredArtefacts: TaskKey[Seq[NativeArtefacts]] =
+      TaskKey[Seq[NativeArtefacts]](
+        "snxVendoredArtefacts",
+        "Builds the vendored native libraries; yields their archives and include directories.")
+
     /** Configuration namespace for sbt-native-extras. `SNX.Native / crossPaths` is the platform-specific switch:
       * when true, per-platform source and resource directories are registered and the project publishes its native
       * content under the OS/arch classifier (with a placeholder main artifact). Defaults to `false`.
@@ -142,12 +168,8 @@ object SNXImports:
     /** Lift `module` into a classified [[NativeDependency]]. */
     def native: NativeDependency = NativeDependency(module)
 
-    /** Lift `module` and attach per-platform linker flags. */
-    infix def linking(flags: PartialFunction[NativePlatform, Seq[String]]): NativeDependency =
-      NativeDependency(module).linking(flags)
-
-    /** Lift `module` and attach the full per-platform additive options. */
-    infix def options(bundle: PartialFunction[NativePlatform, NativeDependency.Options]): NativeDependency =
+    /** Lift `module` and attach the per-platform additive [[NativeOptions]]. */
+    infix def options(bundle: PartialFunction[NativePlatform, NativeOptions]): NativeDependency =
       NativeDependency(module).options(bundle)
 
     /** Lift `module` as an unclassified (plain NIR) [[NativeDependency]]. */

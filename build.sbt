@@ -18,6 +18,20 @@ semanticdbEnabled := true
 
 addSbtPlugin("org.scala-native" % "sbt-scala-native" % "0.5.12")
 
+// Bakes the plugin version into a constant so the vendored-build action cache invalidates on a plugin upgrade.
+Compile / sourceGenerators += Def.task {
+  val file = (Compile / sourceManaged).value / "snx" / "sbt" / "BuildInfo.scala"
+  IO.write(
+    file,
+    s"""package snx.sbt
+       |
+       |private[sbt] object BuildInfo:
+       |  final val version: String = "${version.value}"
+       |""".stripMargin
+  )
+  Seq(file)
+}.taskValue
+
 def packageSettings: Seq[Def.Setting[?]] = Seq(
   packageOptions += Package.ManifestAttributes(
     "Specification-Title" -> name.value,

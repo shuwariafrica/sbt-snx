@@ -56,17 +56,18 @@ SNX.dependencies += "com.example" %% "blas" % "1.2"
 ```
 
 The bare form is classified; `.plain` leaves it unclassified, for platform-independent NIR. Attach
-per-platform options by matching the resolved platform - `linking` for linker flags, or `options` for the
-full additive bundle (`linking`, `compile`, `c`, `cpp`):
+per-platform options with `options`, matching the resolved platform to a `NativeOptions` bundle - linker flags
+(`withLinking`) and compile options (`withCompile` for all native sources, `withC`/`withCpp` for C and C++
+only). `NativeOptions()` is the empty bundle; `++` composes two bundles channel by channel:
 
 ```scala
-SNX.dependencies += ("com.example" %% "uv" % "1.4" linking {
-  case NativePlatform.Linux(_, _) => Seq("-luv")
+SNX.dependencies += ("com.example" %% "uv" % "1.4" options {
+  case NativePlatform.Linux(_, _) => NativeOptions().withLinking("-luv")
 })
 
 SNX.dependencies += ("com.example" %% "ssl" % "3" options {
   case NativePlatform.Linux(_, LinuxLibc.Glibc) =>
-    NativeDependency.Options.empty.withLinking("-lssl").withCompile("-I/opt/ssl/include")
+    NativeOptions().withLinking("-lssl") ++ NativeOptions().withCompile("-I/opt/ssl/include")
 })
 ```
 

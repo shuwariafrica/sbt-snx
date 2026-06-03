@@ -20,6 +20,7 @@ package snx.sbt
 import sbt.*
 import sbt.Keys.artifact
 import sbt.Keys.artifacts
+import sbt.Keys.baseDirectory
 import sbt.Keys.configuration
 import sbt.Keys.crossPaths
 import sbt.Keys.fileConverter
@@ -32,11 +33,18 @@ import sbt.Keys.sLog
 import sbt.Keys.scalaBinaryVersion
 import sbt.Keys.scalaVersion
 import sbt.Keys.sourceDirectory
+import sbt.Keys.streams
 import sbt.Keys.target
 import sbt.Keys.unmanagedResourceDirectories
 import sbt.Keys.unmanagedSourceDirectories
 import sbt.Keys.virtualAxes
 import sbt.io.IO
+import sbt.util.ActionCache
+import sbt.util.BuildWideCacheConfiguration
+import sbt.util.CacheImplicits.given
+import sbt.util.CacheLevelTag
+import sbt.util.Digest
+import xsbti.FileConverter
 import xsbti.HashedVirtualFileRef
 
 import java.util.jar.Manifest
@@ -67,6 +75,7 @@ object SNXPlugin extends AutoPlugin:
       SNX.targets := Seq(SNX.target.value),
       SNX.dependencies := Seq.empty,
       SNX.config := Seq.empty,
+      SNX.vendored := Seq.empty,
       SNX.Native / crossPaths := false,
       SNX.platform := Def.uncached {
         val base = (ThisBuild / nativeConfig).value
@@ -102,10 +111,26 @@ object SNXPlugin extends AutoPlugin:
             .updated(mainArtifact, placeholderRef)
             .updated(mainArtifact.withClassifier(Some(SNX.target.value.classifier)), content)
       },
+      SNX.vendoredArtefacts := Def.uncached {
+        val platform = SNX.platform.value
+        val projectBase = baseDirectory.value
+        val rootBase = (LocalRootProject / baseDirectory).value
+        val staging = new File(target.value, "snx/vendored")
+        val cache = Def.cacheConfiguration.value
+        val converter = fileConverter.value
+        val log = streams.value.log
+        SNX.vendored.value.map(source => buildSource(source, platform, projectBase, rootBase, staging, cache, converter, log))
+      },
       nativeConfig := Def.uncached {
         val previous = nativeConfig.value
         val resolved = SNX.platform.value
-        SNX.config.value.foldLeft(previous)((cfg, transform) => transform.lift(resolved).fold(cfg)(_(cfg)))
+        val transformed = SNX.config.value.foldLeft(previous)((cfg, transform) => transform.lift(resolved).fold(cfg)(_(cfg)))
+        SNX.vendored.value.zip(SNX.vendoredArtefacts.value).foldLeft(transformed) { case (cfg, (source, artefacts)) =>
+          val withArtefacts = cfg
+            .withLinkingOptions(cfg.linkingOptions ++ artefacts.archives.map(_.getAbsolutePath))
+            .withCompileOptions(cfg.compileOptions ++ artefacts.includes.map(dir => s"-I${dir.getAbsolutePath}"))
+          applyOptions(withArtefacts, source.optionsFor(resolved))
+        }
       }
     ) ++ inConfig(Compile)(dependencySettings) ++ inConfig(Test)(dependencySettings) ++
       inConfig(Compile)(pathSettings) ++ inConfig(Test)(pathSettings)
@@ -122,15 +147,17 @@ object SNXPlugin extends AutoPlugin:
       SNX.dependencies.value
         .filter(dependency => visible(config, dependency.module))
         .map(_.optionsFor(resolved))
-        .foldLeft(previous) { (cfg, options) =>
-          cfg
-            .withLinkingOptions(cfg.linkingOptions ++ options.linking)
-            .withCompileOptions(cfg.compileOptions ++ options.compile)
-            .withCOptions(cfg.cOptions ++ options.c)
-            .withCppOptions(cfg.cppOptions ++ options.cpp)
-        }
+        .foldLeft(previous)(applyOptions)
     }
   )
+
+  /** Fold one [[NativeOptions]] bundle into `cfg`: each channel appends to its matching `nativeConfig` option list. */
+  private def applyOptions(cfg: NativeConfig, options: NativeOptions): NativeConfig =
+    cfg
+      .withLinkingOptions(cfg.linkingOptions ++ options.linking)
+      .withCompileOptions(cfg.compileOptions ++ options.compile)
+      .withCOptions(cfg.cOptions ++ options.c)
+      .withCppOptions(cfg.cppOptions ++ options.cpp)
 
   private def pathSettings: Seq[Setting[?]] = Seq(
     unmanagedSourceDirectories ++= {
@@ -223,5 +250,74 @@ object SNXPlugin extends AutoPlugin:
           }
           .filter(_.nonEmpty)
           .toSet
+
+  /** Build one declared [[NativeSource]] for the resolved platform: `System` builds nothing (link-only), `Local`
+    * builds its directory (default `vendor/<name>`) with its backend, and `Git` is not yet supported. A `Local`
+    * build is cached per library (local scope only - a compiled archive is not safe to reuse across toolchains): on
+    * a cache hit the build is skipped and the archives and include directories are restored from the cache.
+    */
+  private def buildSource(
+    source: NativeSource,
+    platform: NativePlatform,
+    projectBase: File,
+    rootBase: File,
+    staging: File,
+    cache: BuildWideCacheConfiguration,
+    converter: FileConverter,
+    log: Logger): NativeArtefacts =
+    source match
+      case NativeSource.System(_, _)          => NativeArtefacts.empty
+      case NativeSource.Git(name, _, _, _, _) =>
+        sys.error(s"snx: git-sourced native libraries are not yet supported (library '$name'); use a Local source.")
+      case NativeSource.Local(name, directory, backend, _) =>
+        val location = directory.getOrElse(vendorDir(name, projectBase, rootBase))
+        val sourceStaging = new File(staging, name)
+        val outputDir = cache.outputDirectory
+        val key = List(BuildInfo.version, platform.toString, toolchainId, sourceIdentity(location)) ++ backend.cacheKey(platform)
+        val (archives, includes) = ActionCache.cache[Seq[String], (Seq[String], Seq[String])](
+          key,
+          Digest.zero,
+          Digest.zero,
+          List(CacheLevelTag.Local),
+          cache
+        ) { _ =>
+          IO.delete(sourceStaging)
+          val built = backend.build(BuildContext(location, sourceStaging, platform, log))
+          val outputs =
+            built.archives.map(file => converter.toVirtualFile(file.toPath.nn)) ++
+              built.includes.map(dir => ActionCache.packageDirectory(converter.toVirtualFile(dir.toPath.nn), converter, outputDir))
+          def relative(files: Seq[File]): Seq[String] = files.map(file => outputDir.relativize(file.toPath).toString)
+          ActionCache.InternalActionResult((relative(built.archives), relative(built.includes)), outputs)
+        }
+        def absolute(paths: Seq[String]): Seq[File] = paths.map(path => outputDir.resolve(path).nn.toFile.nn)
+        NativeArtefacts(absolute(archives), absolute(includes))
+
+  /** Resolve a `Local` source's default directory: `vendor/<name>` in the project, else in the build root. */
+  private def vendorDir(name: String, projectBase: File, rootBase: File): File =
+    val inProject = new File(projectBase, s"vendor/$name")
+    if inProject.isDirectory then inProject else new File(rootBase, s"vendor/$name")
+
+  /** A stable content identity for a `Local` source directory: each file's path (relative to the directory) and
+    * content hash, sorted - so the cache key tracks edits to the sources but not file timestamps or ordering.
+    */
+  private def sourceIdentity(directory: File): String =
+    val root = directory.toPath.nn
+    directory.allPaths
+      .get()
+      .filter(_.isFile)
+      .map(file => s"${root.relativize(file.toPath)}:${Digest.sha256Hash(file.toPath.nn).hashHexString}")
+      .sorted
+      .mkString("\n")
+
+  /** The build toolchain identity (clang and cmake versions) folded into the cache key, so an upgraded toolchain
+    * rebuilds rather than reusing an archive compiled against a different one.
+    */
+  private def toolchainId: String =
+    def version(tool: String): String =
+      scala.util
+        .Try(Process(Seq(tool, "--version")).!!.linesIterator.find(_.nonEmpty).getOrElse(""))
+        .toOption
+        .getOrElse("")
+    s"clang=${version("clang")};cmake=${version("cmake")}"
 
 end SNXPlugin
