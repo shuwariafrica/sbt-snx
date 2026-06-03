@@ -22,8 +22,9 @@ import sbt.librarymanagement.ModuleID
 import snx.NativePlatform
 import snx.TargetPlatform
 
-/** A native dependency: a `ModuleID`, whether to inject an OS/arch classifier, and the per-platform additive
-  * [[NativeOptions]] it contributes. See [[NativeDependency$ NativeDependency]].
+/** A managed native dependency: a `ModuleID`, whether to inject an OS/arch classifier, and the per-platform additive
+  * [[NativeOptions]] it contributes. Its source-built counterpart is [[NativeSource]]. See
+  * [[NativeDependency$ NativeDependency]].
   */
 final case class NativeDependency(module: ModuleID, classified: Boolean, nativeOptions: PartialFunction[NativePlatform, NativeOptions]):
 

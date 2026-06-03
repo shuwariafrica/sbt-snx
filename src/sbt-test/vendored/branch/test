@@ -1,0 +1,4 @@
+# A vendored Git source pinned to a branch (not a tag/commit) must fail clearly - a moving ref is not reproducible
+# and the cache would freeze it. The clone succeeds, but the branch check rejects it before building.
+> setupRepo
+-> snxVendoredArtefacts

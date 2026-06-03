@@ -75,6 +75,33 @@ Options follow the dependency's configuration: a `Test` dependency contributes o
 Classifiers use the `os.detected.classifier` spelling (`linux-x86_64`, `osx-aarch_64`, `windows-aarch_64`),
 interoperable with native artefacts published under that convention.
 
+## Vendored native libraries
+
+`SNX.vendored` builds native C/C++ libraries from source - or links ones already installed - and folds their archives
+and headers into the native build for the resolved platform. It is the source-built counterpart to `SNX.dependencies`:
+
+```scala
+SNX.vendored += NativeSource.Local("crypto", NativeBackend.CMake(Seq("crypto")))
+```
+
+A `NativeBackend` builds the source; `CMake` configures, builds, installs (`cmake --install`), and collects the
+installed archives and `include` directory, so the project must declare `install()` rules. The source is one of:
+
+- `Local(name, backend)` - a local directory, defaulting to `vendor/<name>` (`Local(name, dir, backend)` takes an explicit path).
+- `Git(name, uri, ref, backend)` - cloned at a pinned `ref`, which must be a tag or commit; a branch is not reproducible and is rejected.
+- `System(name)` - link-only, for a library already present on the system; nothing is built.
+
+Per-platform linker and compile flags use the same `NativeOptions` bundle as dependencies - for example a system
+library the built archive links against:
+
+```scala
+SNX.vendored += NativeSource.Local("crypto", NativeBackend.CMake(Seq("crypto")))
+  .options { case NativePlatform.Linux(_, _) => NativeOptions().withLinking("-lpthread") }
+```
+
+Each library builds once and is cached locally, keyed by its source, the resolved platform, and the toolchain, so a
+toolchain change rebuilds rather than reusing an incompatible archive.
+
 ## Project native configuration
 
 `SNX.config` is a list of per-platform transforms over the Scala Native `NativeConfig`, applied for the
@@ -161,14 +188,16 @@ These settings are a temporary workaround; remove them once the upstream fix (sb
 
 ## Settings
 
-| Setting                   | Type                    | Default                                      |
-|---------------------------|-------------------------|----------------------------------------------|
-| `SNX.target`              | `TargetPlatform`        | the build host                               |
-| `SNX.targets`             | `Seq[TargetPlatform]`   | the active `SNX.target` alone                |
-| `SNX.platform`            | `NativePlatform` (task) | resolved from `SNX.target` and the toolchain |
-| `SNX.dependencies`        | `Seq[NativeDependency]` | empty                                        |
-| `SNX.config`              | `Seq[NativeTransform]`  | empty                                        |
-| `SNX.Native / crossPaths` | `Boolean`               | `false`                                      |
+| Setting                   | Type                          | Default                                      |
+|---------------------------|-------------------------------|----------------------------------------------|
+| `SNX.target`              | `TargetPlatform`              | the build host                               |
+| `SNX.targets`             | `Seq[TargetPlatform]`         | the active `SNX.target` alone                |
+| `SNX.platform`            | `NativePlatform` (task)       | resolved from `SNX.target` and the toolchain |
+| `SNX.dependencies`        | `Seq[NativeDependency]`       | empty                                        |
+| `SNX.vendored`            | `Seq[NativeSource]`           | empty                                        |
+| `SNX.vendoredArtefacts`   | `Seq[NativeArtefacts]` (task) | built from `SNX.vendored`                    |
+| `SNX.config`              | `Seq[NativeTransform]`        | empty                                        |
+| `SNX.Native / crossPaths` | `Boolean`                     | `false`                                      |
 
 ## License
 

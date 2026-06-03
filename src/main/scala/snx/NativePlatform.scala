@@ -69,8 +69,8 @@ object NativePlatform:
     case OS.Osx     => Osx(target.arch)
     case OS.Windows => Windows(target.arch, resolve(triple, WindowsABI.from, "Windows ABI"))
 
-  // Mirrors scala-native's TargetTriple.parse: the environment is the fourth component, falling back to the third for a
-  // three-component `arch-os-env` triple.
+  // The environment is the fourth component of an `arch-vendor-os-env` triple, or the third of a shorter
+  // `arch-os-env` one; both are offered, most specific first.
   private def environments(triple: String): List[String] =
     val parts = triple.split("-", 4).nn.toList
     List(parts.lift(3), parts.lift(2)).flatten.map(_.nn).filter(_.nonEmpty)

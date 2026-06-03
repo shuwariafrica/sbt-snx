@@ -53,11 +53,14 @@ import scala.scalanative.sbtplugin.ScalaNativeCrossVersion
 import scala.scalanative.sbtplugin.ScalaNativePlugin
 import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport.nativeConfig
 import scala.sys.process.Process
+import scala.sys.process.ProcessLogger
 
 import snx.sbt.SNXImports.*
 
-/** sbt plugin contributing OS/arch classifier injection and per-platform linking to a Scala Native project. See
-  * [[SNXImports$ SNXImports]] for the settings and syntax it adds to `build.sbt`.
+/** sbt plugin expressing a Scala Native project's per-platform native concerns as build settings: OS/arch dependency
+  * classification, per-platform linker and compiler options, native libraries built from source, per-platform source
+  * and resource directories, and classified publishing. See [[SNXImports$ SNXImports]] for the settings and syntax it
+  * adds to `build.sbt`.
   */
 object SNXPlugin extends AutoPlugin:
 
@@ -252,9 +255,9 @@ object SNXPlugin extends AutoPlugin:
           .toSet
 
   /** Build one declared [[NativeSource]] for the resolved platform: `System` builds nothing (link-only), `Local`
-    * builds its directory (default `vendor/<name>`) with its backend, and `Git` is not yet supported. A `Local`
-    * build is cached per library (local scope only - a compiled archive is not safe to reuse across toolchains): on
-    * a cache hit the build is skipped and the archives and include directories are restored from the cache.
+    * builds its directory (default `vendor/<name>`), and `Git` clones the pinned `ref` then builds it. The build is
+    * cached per library (local scope only - a compiled archive is not safe to reuse across toolchains): on a cache
+    * hit the source is neither fetched nor built and the archives and include directories are restored from the cache.
     */
   private def buildSource(
     source: NativeSource,
@@ -266,31 +269,72 @@ object SNXPlugin extends AutoPlugin:
     converter: FileConverter,
     log: Logger): NativeArtefacts =
     source match
-      case NativeSource.System(_, _)          => NativeArtefacts.empty
-      case NativeSource.Git(name, _, _, _, _) =>
-        sys.error(s"snx: git-sourced native libraries are not yet supported (library '$name'); use a Local source.")
+      case NativeSource.System(_, _)                       => NativeArtefacts.empty
       case NativeSource.Local(name, directory, backend, _) =>
         val location = directory.getOrElse(vendorDir(name, projectBase, rootBase))
-        val sourceStaging = new File(staging, name)
-        val outputDir = cache.outputDirectory
-        val key = List(BuildInfo.version, platform.toString, toolchainId, sourceIdentity(location)) ++ backend.cacheKey(platform)
-        val (archives, includes) = ActionCache.cache[Seq[String], (Seq[String], Seq[String])](
-          key,
-          Digest.zero,
-          Digest.zero,
-          List(CacheLevelTag.Local),
-          cache
-        ) { _ =>
-          IO.delete(sourceStaging)
-          val built = backend.build(BuildContext(location, sourceStaging, platform, log))
-          val outputs =
-            built.archives.map(file => converter.toVirtualFile(file.toPath.nn)) ++
-              built.includes.map(dir => ActionCache.packageDirectory(converter.toVirtualFile(dir.toPath.nn), converter, outputDir))
-          def relative(files: Seq[File]): Seq[String] = files.map(file => outputDir.relativize(file.toPath).toString)
-          ActionCache.InternalActionResult((relative(built.archives), relative(built.includes)), outputs)
-        }
-        def absolute(paths: Seq[String]): Seq[File] = paths.map(path => outputDir.resolve(path).nn.toFile.nn)
-        NativeArtefacts(absolute(archives), absolute(includes))
+        cachedBuild(name, backend, platform, sourceIdentity(location), () => location, staging, cache, converter, log)
+      case NativeSource.Git(name, uri, ref, backend, _) =>
+        val clones = new File(staging, "clones")
+        cachedBuild(name, backend, platform, s"git:$uri@$ref", () => fetch(uri, ref, clones), staging, cache, converter, log)
+
+  /** Build `name` with `backend` for the resolved platform, cached per library in the local action cache. `locate`
+    * resolves - and, for a `Git` source, fetches - the source directory; it runs on a cache miss only. `sourceId`
+    * keys the cache to the source (a `Local` content hash, a `Git` pinned `uri@ref`); `backend.cacheKey` adds the
+    * build configuration.
+    */
+  private def cachedBuild(
+    name: String,
+    backend: NativeBackend,
+    platform: NativePlatform,
+    sourceId: String,
+    locate: () => File,
+    staging: File,
+    cache: BuildWideCacheConfiguration,
+    converter: FileConverter,
+    log: Logger): NativeArtefacts =
+    val sourceStaging = new File(staging, name)
+    val outputDir = cache.outputDirectory
+    val key = List(BuildInfo.version, platform.toString, toolchainId, sourceId) ++ backend.cacheKey(platform)
+    val (archives, includes) = ActionCache.cache[Seq[String], (Seq[String], Seq[String])](
+      key,
+      Digest.zero,
+      Digest.zero,
+      List(CacheLevelTag.Local),
+      cache
+    ) { _ =>
+      val location = locate()
+      IO.delete(sourceStaging)
+      val built = backend.build(BuildContext(location, sourceStaging, platform, log))
+      val outputs =
+        built.archives.map(file => converter.toVirtualFile(file.toPath.nn)) ++
+          built.includes.map(dir => ActionCache.packageDirectory(converter.toVirtualFile(dir.toPath.nn), converter, outputDir))
+      def relative(files: Seq[File]): Seq[String] = files.map(file => outputDir.relativize(file.toPath).toString)
+      ActionCache.InternalActionResult((relative(built.archives), relative(built.includes)), outputs)
+    }
+    def absolute(paths: Seq[String]): Seq[File] = paths.map(path => outputDir.resolve(path).nn.toFile.nn)
+    NativeArtefacts(absolute(archives), absolute(includes))
+  end cachedBuild
+
+  /** Clone `uri` at the pinned `ref` (a tag or commit) into a cached subdirectory of `clones`, reusing an existing
+    * clone. Keyed by both `uri` and `ref`, so different refs of the same repository do not collide. A branch `ref` is
+    * rejected: the cache keys on `uri@ref` and the clone is never re-fetched, so a moving ref would freeze silently.
+    */
+  private def fetch(uri: String, ref: String, clones: File): File =
+    val keyed = new java.net.URI(s"$uri#$ref")
+    val localCopy = Resolvers.uniqueSubdirectoryFor(keyed, clones)
+    Resolvers.creates(localCopy) {
+      Resolvers.run("git", "clone", uri, localCopy.getAbsolutePath)
+      Resolvers.run(Some(localCopy), "git", "checkout", "-q", ref)
+      if isBranch(localCopy, ref) then
+        sys.error(s"snx: vendored Git ref '$ref' ($uri) is a branch; pin a tag or commit so the build is reproducible and cacheable.")
+    }
+
+  /** Whether `ref` resolved to a branch in `repo`: checking out a branch creates `refs/heads/<ref>`, while a tag or
+    * commit leaves a detached HEAD with no such ref.
+    */
+  private def isBranch(repo: File, ref: String): Boolean =
+    val silent = ProcessLogger(_ => (), _ => ())
+    Process(Seq("git", "rev-parse", "--verify", "--quiet", s"refs/heads/$ref"), repo).!(silent) == 0
 
   /** Resolve a `Local` source's default directory: `vendor/<name>` in the project, else in the build root. */
   private def vendorDir(name: String, projectBase: File, rootBase: File): File =

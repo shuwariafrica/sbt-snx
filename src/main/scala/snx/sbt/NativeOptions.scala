@@ -46,8 +46,8 @@ final case class NativeOptions(linking: Seq[String], compile: Seq[String], c: Se
 object NativeOptions:
   given CanEqual[NativeOptions, NativeOptions] = CanEqual.derived
 
-  /** No options - the identity for composition and the base the channel builders extend. */
+  /** No options - the identity for `++` and the base the channel builders extend. */
   val empty: NativeOptions = NativeOptions(Nil, Nil, Nil, Nil)
 
-  /** An empty [[NativeOptions]] to build up with the channel builders or compose with `++`. */
+  /** An empty bundle; equivalent to [[empty]]. */
   def apply(): NativeOptions = empty
