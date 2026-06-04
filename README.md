@@ -186,6 +186,66 @@ lazy val mylib = project.enablePlugins(SNXPlugin).settings(SNX.platformPublishSe
 
 These settings are a temporary workaround; remove them once the upstream fix (sbt/sbt#9293) ships.
 
+## Licence compliance
+
+Statically linking a third-party C/C++ library into a Scala Native binary carries its licence obligations to whoever
+distributes the binary. sbt-snx lets a library or application declare those licences, publishes them into its artifact
+as an SPDX 2.3 document, and aggregates them at the final binary into one SPDX 2.3 document - so the published licence
+data is readable by any SPDX/SBOM tool, not only sbt-snx. It is strict opt-in - nothing is published unless declared.
+
+Declare a licence on a `NativeDependency` or a `NativeSource`. A single listed licence with its text is one line:
+
+```scala
+SNX.vendored += NativeSource.Local("zlib", NativeBackend.CMake(Seq("z")))
+  .licensed("Zlib", file("LICENSE"))
+```
+
+The first argument is an SPDX licence expression, so compound and non-listed cases are expressible; a non-listed
+licence ships its text under a `LicenseRef-` identifier, and other obligations attach fluently:
+
+```scala
+SNX.vendored += NativeSource.Local("crypto", NativeBackend.CMake(Seq("crypto")))
+  .licensed("Apache-2.0", file("LICENSE")).notice(file("NOTICE"))           // an attribution notice to reproduce
+  .source(uri("https://example.com/crypto-1.0.tar.gz"))                     // where the source is available
+  .copyright("Copyright (c) the crypto authors")
+  .identity("pkg:generic/crypto@1.0")                                       // a Package URL, for deduplication
+
+("io.netty" % "netty-tcnative" % "2.0.65.Final").native
+  .licensed("MIT OR Apache-2.0", LicenseText("MIT", file("MIT")), LicenseText("Apache-2.0", file("APACHE")))
+```
+
+A managed dependency derives its identity from its coordinate automatically. `relationship(...)` overrides how a
+library links (`StaticLink`/`DynamicLink`/`Contains`/`DependsOn`); by default a built or compiled-in library links
+statically and a `System` library dynamically. A licence file is resolved relative to its library's source - a
+`Local` source's directory, or a `Git` source's clone - so the upstream `LICENSE` is referenced in place; resolution is
+network-free, so a `Git` source's clone must already exist (build it first) or the text be vendored into the project.
+
+A C library often vendors its own third-party libraries (libgit2 ships copies of zlib, llhttp, pcre2, and more), each
+under its own licence. Declare them as contained components - each becomes its own package, contained by the wrapper:
+
+```scala
+SNX.vendored += NativeSource.Git("libgit2", "https://github.com/libgit2/libgit2.git", "v1.8.1", NativeBackend.CMake(Seq("git2")))
+  .licensed("GPL-2.0-only WITH GCC-exception-2.0", file("COPYING"))
+  .identity("pkg:github/libgit2/libgit2@v1.8.1")
+  .bundles(
+    Component("zlib", "Zlib", file("deps/zlib/LICENSE")).identity("pkg:generic/zlib@1.3.1"),
+    Component("llhttp", "MIT", file("deps/llhttp/LICENSE-MIT")).identity("pkg:github/nodejs/llhttp@9.2.1"),
+    Component("pcre2", "BSD-3-Clause", file("deps/pcre2/LICENCE"))
+  )
+```
+
+Each artefact publishes its declarations as `META-INF/native-licenses/native-licenses.spdx.json` plus the texts.
+`SNX.licenseReport` then aggregates every such document on a binary's classpath - the project's own and its
+dependencies' - into a single SPDX 2.3 document and the accompanying texts, written beside the build output. It is
+config-scoped (`Compile` for an application, `Test` for a test binary):
+
+```text
+sbt Compile/snxLicenseReport
+```
+
+Libraries reaching the binary by several paths are deduplicated by identity (keeping every relationship edge), and only
+those linked into it contribute - a build-only `DependsOn` is omitted from the binary's notices.
+
 ## Settings
 
 | Setting                   | Type                          | Default                                      |
@@ -197,6 +257,7 @@ These settings are a temporary workaround; remove them once the upstream fix (sb
 | `SNX.vendored`            | `Seq[NativeSource]`           | empty                                        |
 | `SNX.vendoredArtefacts`   | `Seq[NativeArtefacts]` (task) | built from `SNX.vendored`                    |
 | `SNX.config`              | `Seq[NativeTransform]`        | empty                                        |
+| `SNX.licenseReport`       | `File` (task)                 | aggregated SPDX document beside the output   |
 | `SNX.Native / crossPaths` | `Boolean`                     | `false`                                      |
 
 ## License

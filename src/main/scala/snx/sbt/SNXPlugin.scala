@@ -24,11 +24,16 @@ import sbt.Keys.baseDirectory
 import sbt.Keys.configuration
 import sbt.Keys.crossPaths
 import sbt.Keys.fileConverter
+import sbt.Keys.fullClasspath
 import sbt.Keys.libraryDependencies
 import sbt.Keys.libraryDependencySchemes
 import sbt.Keys.moduleName
+import sbt.Keys.name
+import sbt.Keys.organization
 import sbt.Keys.packageBin
 import sbt.Keys.packagedArtifacts
+import sbt.Keys.resourceGenerators
+import sbt.Keys.resourceManaged
 import sbt.Keys.sLog
 import sbt.Keys.scalaBinaryVersion
 import sbt.Keys.scalaVersion
@@ -37,6 +42,7 @@ import sbt.Keys.streams
 import sbt.Keys.target
 import sbt.Keys.unmanagedResourceDirectories
 import sbt.Keys.unmanagedSourceDirectories
+import sbt.Keys.version
 import sbt.Keys.virtualAxes
 import sbt.io.IO
 import sbt.util.ActionCache
@@ -47,6 +53,7 @@ import sbt.util.Digest
 import xsbti.FileConverter
 import xsbti.HashedVirtualFileRef
 
+import java.net.URI
 import java.util.jar.Manifest
 
 import scala.scalanative.sbtplugin.ScalaNativeCrossVersion
@@ -59,8 +66,8 @@ import snx.sbt.SNXImports.*
 
 /** sbt plugin expressing a Scala Native project's per-platform native concerns as build settings: OS/arch dependency
   * classification, per-platform linker and compiler options, native libraries built from source, per-platform source
-  * and resource directories, and classified publishing. See [[SNXImports$ SNXImports]] for the settings and syntax it
-  * adds to `build.sbt`.
+  * and resource directories, classified publishing, and third-party native licence compliance. See
+  * [[SNXImports$ SNXImports]] for the settings and syntax it adds to `build.sbt`.
   */
 object SNXPlugin extends AutoPlugin:
 
@@ -134,9 +141,25 @@ object SNXPlugin extends AutoPlugin:
             .withCompileOptions(cfg.compileOptions ++ artefacts.includes.map(dir => s"-I${dir.getAbsolutePath}"))
           applyOptions(withArtefacts, source.optionsFor(resolved))
         }
-      }
+      },
+      Compile / resourceGenerators += Def.task {
+        val deps = SNX.dependencies.value.filter(dep => visible(Compile.name, dep.module))
+        val sources = SNX.vendored.value
+        val projectBase = baseDirectory.value
+        val rootBase = (LocalRootProject / baseDirectory).value
+        val staging = new File(target.value, "snx/vendored")
+        val outputDir = new File((Compile / resourceManaged).value, "META-INF/native-licenses")
+        val specs = deps.map(dependencySpec(_, projectBase)) ++ sources.map(sourceSpec(_, projectBase, rootBase, staging))
+        LicenseGenerator.generate(
+          coordinate(organization.value, name.value, moduleName.value, version.value),
+          specs,
+          outputDir,
+          streams.value.log)
+      }.taskValue,
+      SNX.licenseReport := Def.uncached((Compile / SNX.licenseReport).value)
     ) ++ inConfig(Compile)(dependencySettings) ++ inConfig(Test)(dependencySettings) ++
-      inConfig(Compile)(pathSettings) ++ inConfig(Test)(pathSettings)
+      inConfig(Compile)(pathSettings) ++ inConfig(Test)(pathSettings) ++
+      inConfig(Compile)(reportSettings) ++ inConfig(Test)(reportSettings)
 
   /** Per-configuration dependency options. A dependency contributes only where its configuration is visible to the
     * enclosing one (`Compile`-visible in Compile; `Runtime`/`Test`-only in Test, since Compile-visible options arrive
@@ -153,6 +176,25 @@ object SNXPlugin extends AutoPlugin:
         .foldLeft(previous)(applyOptions)
     }
   )
+
+  /** Aggregate the third-party native licences declared across the enclosing configuration's resolved classpath - the
+    * binary's dependency jars and the project's own products - into an SPDX document beside the build output.
+    */
+  private def reportSettings: Seq[Setting[?]] = Seq(
+    SNX.licenseReport := Def.uncached {
+      val converter = fileConverter.value
+      val classpath = fullClasspath.value.map(entry => converter.toPath(entry.data).nn.toFile.nn)
+      val binary = coordinate(organization.value, name.value, moduleName.value, version.value)
+      val outputDir = new File(target.value, s"snx/licenses/${configuration.value.name}")
+      LicenseAggregator.aggregate(classpath, binary, outputDir, streams.value.log)
+    }
+  )
+
+  /** The publishing artefact's SPDX root facts: a maven Package URL identity, a deterministic document namespace, and
+    * the display name.
+    */
+  private def coordinate(organization: String, name: String, module: String, version: String): ArtifactInfo =
+    ArtifactInfo(name, s"pkg:maven/$organization/$module@$version", Some(version), s"https://spdx.org/spdxdocs/$name-$version")
 
   /** Fold one [[NativeOptions]] bundle into `cfg`: each channel appends to its matching `nativeConfig` option list. */
   private def applyOptions(cfg: NativeConfig, options: NativeOptions): NativeConfig =
@@ -269,11 +311,11 @@ object SNXPlugin extends AutoPlugin:
     converter: FileConverter,
     log: Logger): NativeArtefacts =
     source match
-      case NativeSource.System(_, _)                       => NativeArtefacts.empty
-      case NativeSource.Local(name, directory, backend, _) =>
+      case NativeSource.System(_, _, _)                       => NativeArtefacts.empty
+      case NativeSource.Local(name, directory, backend, _, _) =>
         val location = directory.getOrElse(vendorDir(name, projectBase, rootBase))
         cachedBuild(name, backend, platform, sourceIdentity(location), () => location, staging, cache, converter, log)
-      case NativeSource.Git(name, uri, ref, backend, _) =>
+      case NativeSource.Git(name, uri, ref, backend, _, _) =>
         val clones = new File(staging, "clones")
         cachedBuild(name, backend, platform, s"git:$uri@$ref", () => fetch(uri, ref, clones), staging, cache, converter, log)
 
@@ -335,6 +377,69 @@ object SNXPlugin extends AutoPlugin:
   private def isBranch(repo: File, ref: String): Boolean =
     val silent = ProcessLogger(_ => (), _ => ())
     Process(Seq("git", "rev-parse", "--verify", "--quiet", s"refs/heads/$ref"), repo).!(silent) == 0
+
+  /** The compliance spec for a managed dependency: its native content is compiled into the binary, so an unresolved
+    * relationship defaults to a static link; identity defaults to a maven Package URL from the coordinate (so the
+    * library deduplicates across platforms when binaries are aggregated); bundled files resolve against the project.
+    */
+  private def dependencySpec(dependency: NativeDependency, projectBase: File): LibrarySpec =
+    val module = dependency.module
+    val compliance = dependency.compliance
+    val identity = compliance.identity.orElse(Some(s"pkg:maven/${module.organization}/${module.name}@${module.revision}"))
+    LibrarySpec(
+      module.name,
+      identity,
+      Some(module.revision),
+      resolveRelationship(compliance.relationship, static = true),
+      compliance.license,
+      compliance.texts,
+      compliance.notices,
+      compliance.source,
+      compliance.writtenOffer,
+      compliance.copyright,
+      compliance.originator,
+      compliance.contains,
+      projectBase
+    )
+
+  /** The compliance spec for a source: a built library links statically (its archive is baked in), a `System` library
+    * links dynamically; a `Git` source's clone URI supplies a default source location and its licence files resolve
+    * against the clone; a `Local` source's against its directory; otherwise against the project.
+    */
+  private def sourceSpec(source: NativeSource, projectBase: File, rootBase: File, staging: File): LibrarySpec =
+    val compliance = source.compliance
+    val (version, root, static, origin) = source match
+      case NativeSource.Git(_, uri, ref, _, _, _) => (Some(ref), cloneDir(uri, ref, staging), true, Some(new URI(uri)))
+      case NativeSource.Local(name, dir, _, _, _) => (None, dir.getOrElse(vendorDir(name, projectBase, rootBase)), true, None)
+      case NativeSource.System(_, _, _)           => (None, projectBase, false, None)
+    LibrarySpec(
+      source.name,
+      compliance.identity,
+      version,
+      resolveRelationship(compliance.relationship, static),
+      compliance.license,
+      compliance.texts,
+      compliance.notices,
+      compliance.source.orElse(origin),
+      compliance.writtenOffer,
+      compliance.copyright,
+      compliance.originator,
+      compliance.contains,
+      root
+    )
+
+  /** The cached clone directory for a `Git` source - the same path the build uses - computed without fetching, so
+    * licence generation stays network-free.
+    */
+  private def cloneDir(uri: String, ref: String, staging: File): File =
+    Resolvers.uniqueSubdirectoryFor(new URI(s"$uri#$ref"), new File(staging, "clones"))
+
+  /** Resolve [[Relationship.Auto]] from how the library links (kept independent of the native toolchain): a static
+    * archive or compiled-in content links statically, a link-only library dynamically. An explicit relationship wins.
+    */
+  private def resolveRelationship(relationship: Relationship, static: Boolean): Relationship =
+    if relationship == Relationship.Auto then if static then Relationship.StaticLink else Relationship.DynamicLink
+    else relationship
 
   /** Resolve a `Local` source's default directory: `vendor/<name>` in the project, else in the build root. */
   private def vendorDir(name: String, projectBase: File, rootBase: File): File =

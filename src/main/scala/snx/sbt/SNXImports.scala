@@ -30,6 +30,8 @@ import sbt.SettingKey
 import sbt.TaskKey
 import sbt.librarymanagement.ModuleID
 
+import java.io.File
+
 import scala.scalanative.sbtplugin.ScalaNativeCrossVersion
 
 /** Types, settings, and syntax auto-imported into `build.sbt` by [[SNXPlugin$ SNXPlugin]]. The settings and tasks live
@@ -69,6 +71,15 @@ object SNXImports:
 
   type NativeArtefacts = snx.sbt.NativeArtefacts
   val NativeArtefacts: snx.sbt.NativeArtefacts.type = snx.sbt.NativeArtefacts
+
+  type LicenseText = snx.sbt.LicenseText
+  val LicenseText: snx.sbt.LicenseText.type = snx.sbt.LicenseText
+
+  type Component = snx.sbt.Component
+  val Component: snx.sbt.Component.type = snx.sbt.Component
+
+  type Relationship = snx.sbt.Relationship
+  val Relationship: snx.sbt.Relationship.type = snx.sbt.Relationship
 
   type NativeConfig = scala.scalanative.build.NativeConfig
   val NativeConfig: scala.scalanative.build.NativeConfig.type = scala.scalanative.build.NativeConfig
@@ -141,6 +152,13 @@ object SNXImports:
       TaskKey[Seq[NativeArtefacts]](
         "snxVendoredArtefacts",
         "Builds the vendored native libraries; yields their archives and include directories.")
+
+    /** Aggregates the third-party native licences declared across the binary's resolved classpath into an SPDX 2.3
+      * document and the accompanying texts and notices, written beside the build output. Config-scoped: read it in the
+      * configuration whose binary is being described (`Compile` for an application, `Test` for a test binary).
+      */
+    val licenseReport: TaskKey[File] =
+      TaskKey[File]("snxLicenseReport", "Aggregates third-party native licences on the classpath into an SPDX document.")
 
     /** Configuration namespace for sbt-native-extras. `SNX.Native / crossPaths` is the platform-specific switch:
       * when true, per-platform source and resource directories are registered and the project publishes its native

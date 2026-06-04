@@ -1,0 +1,12 @@
+# A vendored library's bundled licence is generated into META-INF/native-licenses/ and packaged into the jar.
+> checkContents
+# A deterministic document must not change the published jar on rebuild (no cache-invalidation cascade): record
+# the jar hash, reload to drop task memoisation, repackage, and assert the artefact is identical.
+> recordHash
+> reload
+> assertStable
+# The generator must not rewrite the SPDX document when content is unchanged (writeIfChanged), so an mtime-sensitive
+# copyResources never re-syncs - record the file timestamp, reload, regenerate, assert it is untouched.
+> recordResourceTime
+> reload
+> assertResourceUnchanged
