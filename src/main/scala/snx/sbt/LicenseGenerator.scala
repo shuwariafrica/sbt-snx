@@ -161,7 +161,7 @@ private[sbt] object LicenseGenerator:
     val key = id.stripPrefix("SPDXRef-Package-")
     def namespaced(ref: String): String = s"LicenseRef-$key-${ref.stripPrefix("LicenseRef-")}"
     texts.foreach: text =>
-      val content = bundle(name, text.file, sourceRoot, outputDir, files)
+      val content = bundle(name, key, text.file, sourceRoot, outputDir, files)
       val ref = namespaced(text.id)
       if text.id.startsWith("LicenseRef-") && !extracted.contains(ref) then extracted.update(ref, content)
     val expression = texts
@@ -172,7 +172,7 @@ private[sbt] object LicenseGenerator:
         current.replaceAll(
           java.util.regex.Pattern.quote(ref).nn + "(?![A-Za-z0-9.-])",
           java.util.regex.Matcher.quoteReplacement(namespaced(ref))))
-    val attribution = notices.map(notice => bundle(name, notice, sourceRoot, outputDir, files))
+    val attribution = notices.map(notice => bundle(name, key, notice, sourceRoot, outputDir, files))
     SpdxPackage(
       id,
       name,
@@ -188,21 +188,20 @@ private[sbt] object LicenseGenerator:
   end packageOf
 
   /** Resolve a bundled file network-free (relative to the library's source root, or absolute), stage it under
-    * `outputDir`, and return its content.
+    * `outputDir` named by the package `key` so distinct packages that share a display name never overwrite each other,
+    * and return its content. `name` is the human library name, used only for the not-found error.
     */
-  private def bundle(library: String, path: File, sourceRoot: File, outputDir: File, files: LinkedHashMap[File, String]): String =
+  private def bundle(name: String, key: String, path: File, sourceRoot: File, outputDir: File, files: LinkedHashMap[File, String]): String =
     val file = if path.isAbsolute then path else new File(sourceRoot, path.getPath)
     if !file.isFile then
       sys.error(
-        s"snx: licence file not found for '$library': ${file.getAbsolutePath}. For a Git source, build the vendored library first so its clone exists, or vendor the licence text into your project.")
+        s"snx: licence file not found for '$name': ${file.getAbsolutePath}. For a Git source, build the vendored library first so its clone exists, or vendor the licence text into your project.")
     val content = IO.read(file, StandardCharsets.UTF_8)
-    files.update(new File(outputDir, filename(library, file.getName)), content)
+    files.update(new File(outputDir, s"$key-${file.getName}"), content)
     content
 
   private def identifier(identity: Option[String], name: String, version: Option[String]): String =
     Spdx.identifier(identity.getOrElse(version.fold(normalise(name))(revision => s"${normalise(name)}@$revision")))
-
-  private def filename(library: String, original: String): String = s"${normalise(library)}-$original"
 
   private def normalise(value: String): String =
     value.toLowerCase(Locale.US).nn.replaceAll("[^a-z0-9]+", "-").nn.stripPrefix("-").stripSuffix("-")

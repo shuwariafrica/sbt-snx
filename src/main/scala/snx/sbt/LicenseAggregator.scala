@@ -41,11 +41,25 @@ private[sbt] object LicenseAggregator:
     */
   final private case class Fragment(graph: SpdxGraph, roots: Vector[String], texts: Map[String, String])
 
+  /** Whether any classpath entry carries a native-licence document. Gates the automatic aggregation at link time, so a
+    * binary whose classpath declares no third-party native licences produces no report.
+    */
+  def hasMarkers(classpath: Seq[File]): Boolean =
+    classpath.exists(entry => if entry.isDirectory then new File(entry, document).isFile else jarHasMarker(entry))
+
+  private def jarHasMarker(jar: File): Boolean =
+    scala.util
+      .Try:
+        val zip = new ZipFile(jar)
+        try Option(zip.getEntry(document)).isDefined
+        finally zip.close()
+      .getOrElse(false)
+
   /** Read each classpath document, merge into one SPDX document rooted at `binary`, write it and the bundled texts
     * under `outputDir`, and return the SPDX document file.
     */
   def aggregate(classpath: Seq[File], binary: ArtifactInfo, outputDir: File, log: Logger): File =
-    val fragments = classpath.flatMap(entry => if entry.isDirectory then fromDirectory(entry) else fromJar(entry))
+    val fragments = classpath.flatMap(entry => if entry.isDirectory then fromDirectory(entry) else fromJar(entry, log))
     val merged = SpdxGraph.merge(fragments.map(_.graph))
     val texts = fragments.flatMap(_.texts).toMap
     val binaryId = Spdx.identifier(binary.identity)
@@ -74,32 +88,49 @@ private[sbt] object LicenseAggregator:
     out
   end aggregate
 
-  /** The fragment from a dependency jar carrying the SPDX document; none otherwise. */
-  private def fromJar(jar: File): Option[Fragment] =
+  /** The fragment from a dependency jar carrying the SPDX document; none if it carries no document. A dependency is
+    * outside the build's control, so a present-but-unreadable document is reported and skipped (loud, never silent - a
+    * dropped obligation is a compliance risk) rather than failing the whole aggregation; a local one is fatal, see
+    * [[fromDirectory]].
+    */
+  private def fromJar(jar: File, log: Logger): Option[Fragment] =
     scala.util
-      .Try:
-        val zip = new ZipFile(jar)
-        try
-          Option(zip.getEntry(document)).map: _ =>
-            val (graph, roots) = Spdx.parse(read(zip, document))
-            val texts = entries(zip).filterNot(_ == document).map(name => name.stripPrefix(directory) -> read(zip, name)).toMap
-            Fragment(graph, roots, texts)
-        finally zip.close()
+      .Try(new ZipFile(jar))
       .toOption
-      .flatten
+      .flatMap: zip =>
+        try
+          Option(zip.getEntry(document)).flatMap: _ =>
+            scala.util.Try:
+              val (graph, roots) = Spdx.parse(read(zip, document))
+              val texts = entries(zip).filterNot(_ == document).map(name => name.stripPrefix(directory) -> read(zip, name)).toMap
+              Fragment(graph, roots, texts)
+            match
+              case scala.util.Success(fragment) => Some(fragment)
+              case scala.util.Failure(error)    =>
+                log.warn(s"snx: ignoring an unreadable native-licence document in ${jar.getName}: ${error.getMessage}")
+                None
+        finally zip.close()
 
-  /** The fragment from a products directory carrying the SPDX document; none otherwise. */
+  /** The fragment from a products directory carrying the SPDX document; none if it carries no document. A directory is
+    * a local, build-controlled artefact, so a present-but-unreadable document here is fatal - a generation bug to fix,
+    * not skipped - unlike a dependency jar's, see [[fromJar]].
+    */
   private def fromDirectory(base: File): Option[Fragment] =
     val file = new File(base, document)
     if !file.isFile then None
     else
-      val (graph, roots) = Spdx.parse(IO.read(file, StandardCharsets.UTF_8))
-      val texts = Option(new File(base, directory).listFiles)
-        .getOrElse(Array.empty[File])
-        .filter(text => text.isFile && text.getName != LicenseGenerator.document)
-        .map(text => text.getName.nn -> IO.read(text, StandardCharsets.UTF_8))
-        .toMap
-      Some(Fragment(graph, roots, texts))
+      scala.util.Try:
+        val (graph, roots) = Spdx.parse(IO.read(file, StandardCharsets.UTF_8))
+        val texts = Option(new File(base, directory).listFiles)
+          .getOrElse(Array.empty[File])
+          .filter(text => text.isFile && text.getName != LicenseGenerator.document)
+          .map(text => text.getName.nn -> IO.read(text, StandardCharsets.UTF_8))
+          .toMap
+        Fragment(graph, roots, texts)
+      match
+        case scala.util.Success(fragment) => Some(fragment)
+        case scala.util.Failure(error)    =>
+          sys.error(s"snx: a local native-licence document is unreadable: ${file.getAbsolutePath}: ${error.getMessage}")
 
   /** The names of every entry under the marker directory. */
   private def entries(zip: ZipFile): Seq[String] =

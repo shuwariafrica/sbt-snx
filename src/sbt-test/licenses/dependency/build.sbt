@@ -23,6 +23,8 @@ checkDep := {
   assert(flat.contains("\"licenseDeclared\":\"BSD-3-Clause\""), s"dep licence expression missing: $flat")
   assert(flat.contains("\"relationshipType\":\"STATIC_LINK\""), s"dep relationship missing: $flat")
   assert(flat.contains("\"originator\":\"Organization:theblasauthors\""), s"dep originator missing: $flat")
-  assert(IO.read(dir / "blas-LICENSE").contains("BSD 3-Clause"), "dep licence text not bundled")
+  // The licence text is bundled alongside the document under a name keyed by the dependency's identity.
+  val bundled = Option(dir.listFiles).getOrElse(Array.empty[File]).filter(_.getName != "native-licenses.spdx.json")
+  assert(bundled.exists(f => IO.read(f).contains("BSD 3-Clause")), s"dep licence text not bundled: ${bundled.map(_.getName).toList}")
   streams.value.log.info("snx licenses/dependency: dependency licence + identity + text in the generated SPDX document")
 }

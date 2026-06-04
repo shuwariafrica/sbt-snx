@@ -1,0 +1,4 @@
+# Linking a binary that bundles a licensed native library auto-produces the aggregated SPDX document beside the build
+# output - no explicit licenseReport call. A project declaring no native licences produces none (the gate is unit-tested).
+> Compile/nativeLink
+> check

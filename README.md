@@ -88,7 +88,7 @@ A `NativeBackend` builds the source; `CMake` configures, builds, installs (`cmak
 installed archives and `include` directory, so the project must declare `install()` rules. The source is one of:
 
 - `Local(name, backend)` - a local directory, defaulting to `vendor/<name>` (`Local(name, dir, backend)` takes an explicit path).
-- `Git(name, uri, ref, backend)` - cloned at a pinned `ref`, which must be a tag or commit; a branch is not reproducible and is rejected.
+- `Git(name, uri, ref, backend)` - cloned at `ref` (a tag, commit, or branch). A branch is cloned once then cached and frozen per machine, so pin a tag or commit for a reproducible or updatable build.
 - `System(name)` - link-only, for a library already present on the system; nothing is built.
 
 Per-platform linker and compile flags use the same `NativeOptions` bundle as dependencies - for example a system
@@ -234,9 +234,11 @@ SNX.vendored += NativeSource.Git("libgit2", "https://github.com/libgit2/libgit2.
   )
 ```
 
-Each artefact publishes its declarations as `META-INF/native-licenses/native-licenses.spdx.json` plus the texts.
-`SNX.licenseReport` then aggregates every such document on a binary's classpath - the project's own and its
-dependencies' - into a single SPDX 2.3 document and the accompanying texts, written beside the build output. It is
+Each artefact publishes its declarations as `META-INF/native-licenses/native-licenses.spdx.json` plus the texts. At the
+final binary these are aggregated into a single SPDX 2.3 document and the accompanying texts, written beside the build
+output. Producing a linked deliverable (`Compile / nativeLink`) does this automatically whenever the classpath declares
+any native licences, so an application or a native library gets its aggregate without an extra step; a project that
+declares none produces no report. To run it on demand - or for a test binary - use `SNX.licenseReport`, which is
 config-scoped (`Compile` for an application, `Test` for a test binary):
 
 ```text

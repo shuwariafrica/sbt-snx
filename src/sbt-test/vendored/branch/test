@@ -1,4 +1,5 @@
-# A vendored Git source pinned to a branch (not a tag/commit) must fail clearly - a moving ref is not reproducible
-# and the cache would freeze it. The clone succeeds, but the branch check rejects it before building.
+# A vendored Git source may pin a branch: choosing a stable ref is the downstream user's responsibility, as it is
+# for sbt's own git source dependencies. A branch is cloned once then cached and frozen per machine.
 > setupRepo
--> snxVendoredArtefacts
+> snxVendoredArtefacts
+> check

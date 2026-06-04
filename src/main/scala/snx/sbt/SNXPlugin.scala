@@ -59,8 +59,8 @@ import java.util.jar.Manifest
 import scala.scalanative.sbtplugin.ScalaNativeCrossVersion
 import scala.scalanative.sbtplugin.ScalaNativePlugin
 import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport.nativeConfig
+import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport.nativeLink
 import scala.sys.process.Process
-import scala.sys.process.ProcessLogger
 
 import snx.sbt.SNXImports.*
 
@@ -151,12 +151,26 @@ object SNXPlugin extends AutoPlugin:
         val outputDir = new File((Compile / resourceManaged).value, "META-INF/native-licenses")
         val specs = deps.map(dependencySpec(_, projectBase)) ++ sources.map(sourceSpec(_, projectBase, rootBase, staging))
         LicenseGenerator.generate(
-          coordinate(organization.value, name.value, moduleName.value, version.value),
+          coordinate(organization.value, name.value, moduleName.value, version.value, scalaVersion.value, scalaBinaryVersion.value),
           specs,
           outputDir,
-          streams.value.log)
+          streams.value.log
+        )
       }.taskValue,
-      SNX.licenseReport := Def.uncached((Compile / SNX.licenseReport).value)
+      SNX.licenseReport := Def.uncached((Compile / SNX.licenseReport).value),
+      // Producing a linked deliverable also produces its third-party native-licence aggregate, but only when the
+      // classpath declares any - so a binary with no native licences (and a NIR library, which never links here) is
+      // untouched. The explicit SNX.licenseReport remains for on-demand use.
+      Compile / nativeLink := Def.uncached {
+        val result = (Compile / nativeLink).value
+        val converter = fileConverter.value
+        val classpath = (Compile / fullClasspath).value.map(entry => converter.toPath(entry.data).nn.toFile.nn)
+        if LicenseAggregator.hasMarkers(classpath) then
+          val binary =
+            coordinate(organization.value, name.value, moduleName.value, version.value, scalaVersion.value, scalaBinaryVersion.value)
+          val _ = LicenseAggregator.aggregate(classpath, binary, new File(target.value, "snx/licenses/compile"), streams.value.log)
+        result
+      }
     ) ++ inConfig(Compile)(dependencySettings) ++ inConfig(Test)(dependencySettings) ++
       inConfig(Compile)(pathSettings) ++ inConfig(Test)(pathSettings) ++
       inConfig(Compile)(reportSettings) ++ inConfig(Test)(reportSettings)
@@ -184,17 +198,36 @@ object SNXPlugin extends AutoPlugin:
     SNX.licenseReport := Def.uncached {
       val converter = fileConverter.value
       val classpath = fullClasspath.value.map(entry => converter.toPath(entry.data).nn.toFile.nn)
-      val binary = coordinate(organization.value, name.value, moduleName.value, version.value)
+      val binary =
+        coordinate(organization.value, name.value, moduleName.value, version.value, scalaVersion.value, scalaBinaryVersion.value)
       val outputDir = new File(target.value, s"snx/licenses/${configuration.value.name}")
       LicenseAggregator.aggregate(classpath, binary, outputDir, streams.value.log)
     }
   )
 
-  /** The publishing artefact's SPDX root facts: a maven Package URL identity, a deterministic document namespace, and
-    * the display name.
+  /** The publishing artefact's SPDX root facts: a platform-independent maven Package URL identity, a deterministic
+    * document namespace, and the display name. The identity is a deliberate dedup KEY, not a resolvable locator: a
+    * licence is invariant across the binary axes, so the coordinate strips the Scala Native cross suffix (as it omits
+    * the OS/arch classifier) - it identifies the logical library, not a specific binary artifact. Stripping the suffix
+    * that publishing (or [[SNXImports.SNX.platformPublishSettings]]) may have baked into `module` makes the artefact
+    * carry the same base coordinate a consumer derives from the dependency's `ModuleID.name`, so the same library
+    * deduplicates whether read from a published document or declared by the consumer.
     */
-  private def coordinate(organization: String, name: String, module: String, version: String): ArtifactInfo =
-    ArtifactInfo(name, s"pkg:maven/$organization/$module@$version", Some(version), s"https://spdx.org/spdxdocs/$name-$version")
+  private def coordinate(
+    organization: String,
+    name: String,
+    module: String,
+    version: String,
+    scalaVersion: String,
+    scalaBinaryVersion: String): ArtifactInfo =
+    val base = module.stripSuffix(nativeSuffix(scalaVersion, scalaBinaryVersion))
+    ArtifactInfo(name, s"pkg:maven/$organization/$base@$version", Some(version), s"https://spdx.org/spdxdocs/$name-$version")
+
+  /** The Scala Native cross suffix for this Scala version (for example `_native0.5_3`), derived rather than hardcoded,
+    * so the base artefact identity can be recovered from a suffixed module name.
+    */
+  private def nativeSuffix(scalaVersion: String, scalaBinaryVersion: String): String =
+    CrossVersion(ScalaNativeCrossVersion.binary, scalaVersion, scalaBinaryVersion).fold("")(cross => cross("x").stripPrefix("x"))
 
   /** Fold one [[NativeOptions]] bundle into `cfg`: each channel appends to its matching `nativeConfig` option list. */
   private def applyOptions(cfg: NativeConfig, options: NativeOptions): NativeConfig =
@@ -297,7 +330,7 @@ object SNXPlugin extends AutoPlugin:
           .toSet
 
   /** Build one declared [[NativeSource]] for the resolved platform: `System` builds nothing (link-only), `Local`
-    * builds its directory (default `vendor/<name>`), and `Git` clones the pinned `ref` then builds it. The build is
+    * builds its directory (default `vendor/<name>`), and `Git` clones `ref` then builds it. The build is
     * cached per library (local scope only - a compiled archive is not safe to reuse across toolchains): on a cache
     * hit the source is neither fetched nor built and the archives and include directories are restored from the cache.
     */
@@ -357,9 +390,10 @@ object SNXPlugin extends AutoPlugin:
     NativeArtefacts(absolute(archives), absolute(includes))
   end cachedBuild
 
-  /** Clone `uri` at the pinned `ref` (a tag or commit) into a cached subdirectory of `clones`, reusing an existing
-    * clone. Keyed by both `uri` and `ref`, so different refs of the same repository do not collide. A branch `ref` is
-    * rejected: the cache keys on `uri@ref` and the clone is never re-fetched, so a moving ref would freeze silently.
+  /** Clone `uri` at `ref` (a tag, commit, or branch) into a cached subdirectory of `clones`, reusing an existing
+    * clone. Keyed by both `uri` and `ref`, so different refs of the same repository do not collide. The clone is
+    * cached and never re-fetched, so a branch resolves once and is then frozen per machine; pin a tag or commit for a
+    * reproducible or updatable build.
     */
   private def fetch(uri: String, ref: String, clones: File): File =
     val keyed = new java.net.URI(s"$uri#$ref")
@@ -367,16 +401,7 @@ object SNXPlugin extends AutoPlugin:
     Resolvers.creates(localCopy) {
       Resolvers.run("git", "clone", uri, localCopy.getAbsolutePath)
       Resolvers.run(Some(localCopy), "git", "checkout", "-q", ref)
-      if isBranch(localCopy, ref) then
-        sys.error(s"snx: vendored Git ref '$ref' ($uri) is a branch; pin a tag or commit so the build is reproducible and cacheable.")
     }
-
-  /** Whether `ref` resolved to a branch in `repo`: checking out a branch creates `refs/heads/<ref>`, while a tag or
-    * commit leaves a detached HEAD with no such ref.
-    */
-  private def isBranch(repo: File, ref: String): Boolean =
-    val silent = ProcessLogger(_ => (), _ => ())
-    Process(Seq("git", "rev-parse", "--verify", "--quiet", s"refs/heads/$ref"), repo).!(silent) == 0
 
   /** The compliance spec for a managed dependency: its native content is compiled into the binary, so an unresolved
     * relationship defaults to a static link; identity defaults to a maven Package URL from the coordinate (so the

@@ -18,6 +18,9 @@ semanticdbEnabled := true
 
 addSbtPlugin("org.scala-native" % "sbt-scala-native" % "0.5.12")
 
+libraryDependencies += "org.scalameta" %% "munit" % "1.3.2" % Test
+testFrameworks += new TestFramework("munit.Framework")
+
 // Bakes the plugin version into a constant so the vendored-build action cache invalidates on a plugin upgrade.
 Compile / sourceGenerators += Def.task {
   val file = (Compile / sourceManaged).value / "snx" / "sbt" / "BuildInfo.scala"

@@ -86,7 +86,9 @@ end NativeSource
 object NativeSource:
   given CanEqual[NativeSource, NativeSource] = CanEqual.derived
 
-  /** Built from a git repository fetched at a pinned `ref` - a tag or commit SHA. */
+  /** Built from a git repository fetched at `ref` (a tag, commit, or branch). A branch is cloned once then cached, so
+    * pin a tag or commit for a reproducible or updatable build.
+    */
   final case class Git(
     name: String,
     uri: String,
