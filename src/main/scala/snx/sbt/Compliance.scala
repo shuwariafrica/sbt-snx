@@ -42,12 +42,12 @@ enum Relationship:
 object Relationship:
   given CanEqual[Relationship, Relationship] = CanEqual.derived
 
-/** A third-party component bundled inside a licensed library (for example a C library that vendors its own copies of
-  * other libraries): its own SPDX licence expression, texts, notices, and provenance. It is contained by its parent
-  * (an SPDX `CONTAINS` relationship), so it carries no link relationship of its own. See [[Component$ Component]].
+/** The licensing of a piece of third-party native software: the SPDX licence expression it is offered under and the
+  * texts backing it, the attribution notices, copyright, and originator to reproduce, where its source is available or
+  * offered, and a package identity used to deduplicate it. Both a linked library (via [[Compliance]]) and a contained
+  * component ([[Component]]) carry one. See [[Licensing$ Licensing]].
   */
-final case class Component(
-  name: String,
+final case class Licensing(
   license: String,
   texts: Seq[LicenseText],
   notices: Seq[File],
@@ -55,25 +55,76 @@ final case class Component(
   writtenOffer: Option[String],
   identity: Option[String],
   copyright: Option[String],
-  originator: Option[String]):
+  originator: Option[String])
 
-  /** Declare a package identity (a Package URL) used to deduplicate this component when binaries are aggregated. */
-  def identity(purl: String): Component = copy(identity = Some(purl))
+/** Equality instance and the empty value for [[Licensing]]. */
+object Licensing:
+  given CanEqual[Licensing, Licensing] = CanEqual.derived
 
-  /** Declare where the corresponding source is available. */
-  def source(uri: URI): Component = copy(source = Some(uri))
+  /** Alias for [[empty]]: no declared licensing. */
+  def apply(): Licensing = empty
 
-  /** Declare a written offer for source - contact details, kept separate from a direct [[source]] link. */
-  def writtenOffer(contact: String): Component = copy(writtenOffer = Some(contact))
+  /** No declared licensing. */
+  val empty: Licensing = Licensing("", Nil, Nil, None, None, None, None, None)
+
+/** Capability of a declaration to carry and fluently refine its [[Licensing]]. Mixed into [[Component]] and, through
+  * [[Licensed]], into the native library declarations, so the per-field setters are defined once.
+  */
+trait Documented[Self]:
+  def licensing: Licensing
+  protected def withLicensing(updated: Licensing): Self
+
+  /** Declare a single-identifier licence with its bundled text (relative to the declaration's source root). */
+  def licensed(license: String, text: File): Self =
+    withLicensing(licensing.copy(license = license, texts = Seq(LicenseText(license, text))))
+
+  /** Declare the SPDX licence expression and the texts backing it; for a listed licence the texts may be omitted. */
+  def licensed(license: String, texts: LicenseText*): Self =
+    withLicensing(licensing.copy(license = license, texts = texts.toSeq))
 
   /** Attach attribution notices (for example an Apache `NOTICE` file) to reproduce alongside the licence. */
-  def notice(files: File*): Component = copy(notices = notices ++ files)
+  def notice(files: File*): Self = withLicensing(licensing.copy(notices = licensing.notices ++ files))
 
-  def copyright(notice: String): Component = copy(copyright = Some(notice))
+  /** Declare where the corresponding source is available. */
+  def source(uri: URI): Self = withLicensing(licensing.copy(source = Some(uri)))
+
+  /** Declare a written offer for source - contact details, kept separate from a direct [[source]] link. */
+  def writtenOffer(contact: String): Self = withLicensing(licensing.copy(writtenOffer = Some(contact)))
+
+  /** Declare a package identity (a Package URL) used to deduplicate this library when binaries are aggregated. */
+  def identity(purl: String): Self = withLicensing(licensing.copy(identity = Some(purl)))
+
+  def copyright(notice: String): Self = withLicensing(licensing.copy(copyright = Some(notice)))
 
   /** Attach an originator - the upstream author or organisation. */
-  def originator(who: String): Component = copy(originator = Some(who))
-end Component
+  def originator(who: String): Self = withLicensing(licensing.copy(originator = Some(who)))
+end Documented
+
+/** Capability of a native library declaration - [[NativeDependency]] or [[NativeSource]] - to carry its full
+  * [[Compliance]]: its [[Licensing]] plus how it links and the components it bundles.
+  */
+trait Licensed[Self] extends Documented[Self]:
+  def compliance: Compliance
+  protected def withCompliance(updated: Compliance): Self
+
+  final def licensing: Licensing = compliance.licensing
+  final protected def withLicensing(updated: Licensing): Self = withCompliance(compliance.copy(licensing = updated))
+
+  /** Override how this library links into the binary; otherwise it is resolved from its kind (a built library links
+    * statically, a `System` library dynamically).
+    */
+  def relationship(relationship: Relationship): Self = withCompliance(compliance.copy(relationship = relationship))
+
+  /** Declare third-party components this library bundles, each contained within it (an SPDX `CONTAINS`). */
+  def bundles(components: Component*): Self = withCompliance(compliance.copy(contains = compliance.contains ++ components))
+
+/** A third-party component bundled inside a licensed library (for example a C library that vendors its own copies of
+  * other libraries): its name and [[Licensing]]. It is contained by its parent (an SPDX `CONTAINS` relationship), so
+  * it carries no link relationship of its own. See [[Component$ Component]].
+  */
+final case class Component(name: String, licensing: Licensing) extends Documented[Component]:
+  export licensing.*
+  protected def withLicensing(updated: Licensing): Component = copy(licensing = updated)
 
 /** Factories for [[Component]]. */
 object Component:
@@ -81,38 +132,25 @@ object Component:
 
   /** A component under a single-identifier licence with its bundled text (relative to the parent's source root). */
   def apply(name: String, license: String, text: File): Component =
-    Component(name, license, Seq(LicenseText(license, text)), Nil, None, None, None, None, None)
+    Component(name, Licensing.empty.copy(license = license, texts = Seq(LicenseText(license, text))))
 
   /** A component under an SPDX licence expression with the texts backing it. */
   def apply(name: String, license: String, texts: LicenseText*): Component =
-    Component(name, license, texts.toSeq, Nil, None, None, None, None, None)
+    Component(name, Licensing.empty.copy(license = license, texts = texts.toSeq))
 
-/** The licence-compliance metadata a third-party native library declares: the SPDX licence expression it is offered
-  * under and the texts backing it, any attribution notices, how it links, where its source is available or offered,
-  * a package identity for deduplication, copyright and originator notices, and any third-party components it bundles.
-  * See [[Compliance$ Compliance]].
+/** The licence-compliance metadata a native library declares: its [[Licensing]], how it links into the binary, and any
+  * third-party components it bundles. Its [[Licensing]] members are re-exported, so they read flatly off the compliance
+  * value. See [[Compliance$ Compliance]].
   */
-final case class Compliance(
-  license: String,
-  texts: Seq[LicenseText],
-  notices: Seq[File],
-  relationship: Relationship,
-  source: Option[URI],
-  writtenOffer: Option[String],
-  identity: Option[String],
-  copyright: Option[String],
-  originator: Option[String],
-  contains: Seq[Component])
+final case class Compliance(licensing: Licensing, relationship: Relationship, contains: Seq[Component]):
+  export licensing.*
 
 /** Equality instance and the empty value for [[Compliance]]. */
 object Compliance:
   given CanEqual[Compliance, Compliance] = CanEqual.derived
 
-  /** No declared compliance metadata: an empty licence and [[Relationship.Auto]]. */
-  val empty: Compliance = Compliance("", Nil, Nil, Relationship.Auto, None, None, None, None, None, Nil)
+  /** Alias for [[empty]]: empty licensing and [[Relationship.Auto]]. */
+  def apply(): Compliance = empty
 
-/** Capability of a third-party native library declaration - [[NativeDependency]] or [[NativeSource]] - to carry
-  * licence-compliance metadata.
-  */
-trait Licensed:
-  def compliance: Compliance
+  /** No declared compliance metadata: empty licensing and [[Relationship.Auto]]. */
+  val empty: Compliance = Compliance(Licensing.empty, Relationship.Auto, Nil)

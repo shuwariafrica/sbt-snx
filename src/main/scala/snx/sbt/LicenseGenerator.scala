@@ -87,6 +87,7 @@ private[sbt] object LicenseGenerator:
         Some(artifact.identity),
         Vector.empty)
       active.foreach: spec =>
+        checkTexts(spec.name, spec.license, spec.texts, log)
         val libId = identifier(spec.identity, spec.name, spec.version)
         packages += packageOf(
           spec.name,
@@ -107,6 +108,7 @@ private[sbt] object LicenseGenerator:
         )
         relationships += SpdxRelationship(artifactId, libId, token(spec.relationship))
         spec.contains.foreach: component =>
+          checkTexts(component.name, component.license, component.texts, log)
           val componentId = identifier(component.identity, component.name, None)
           packages += packageOf(
             component.name,
@@ -136,6 +138,19 @@ private[sbt] object LicenseGenerator:
   end generate
 
   private def declared(spec: LibrarySpec): Boolean = spec.license.nonEmpty || spec.texts.nonEmpty || spec.contains.nonEmpty
+
+  /** Warn (never fail) when a declared SPDX expression references a `LicenseRef-`/`DocumentRef-` token but supplies no
+    * text for it: the emitted document would otherwise carry a `licenseDeclared` with no matching extracted-licensing
+    * entry. Listed SPDX identifiers need no text and are not checked - they are resolved by the identifier alone.
+    */
+  private def checkTexts(name: String, license: String, texts: Seq[LicenseText], log: Logger): Unit =
+    val provided = texts.map(_.id).toSet
+    references(license)
+      .filterNot(provided.contains)
+      .foreach(ref => log.warn(s"snx: licence for '$name': expression references '$ref' but no licence text was provided for it"))
+
+  private def references(expression: String): Seq[String] =
+    """LicenseRef-[A-Za-z0-9.-]+|DocumentRef-[A-Za-z0-9.-]+""".r.findAllIn(expression).toVector.distinct
 
   /** Build one SPDX package, bundling its texts (a non-listed `LicenseRef-` text also becomes an extracted-licensing
     * entry) and notices (embedded as attribution texts).

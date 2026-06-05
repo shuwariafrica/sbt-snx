@@ -18,7 +18,6 @@
 package snx.sbt
 
 import java.io.File
-import java.net.URI
 
 import snx.NativePlatform
 
@@ -27,7 +26,7 @@ import snx.NativePlatform
   * contributes, and its third-party licence-compliance metadata. See [[NativeSource$ NativeSource]] for its variants
   * and factories.
   */
-sealed trait NativeSource extends Licensed:
+sealed trait NativeSource extends Licensed[NativeSource]:
   def name: String
   def nativeOptions: PartialFunction[NativePlatform, NativeOptions]
   def compliance: Compliance
@@ -38,42 +37,7 @@ sealed trait NativeSource extends Licensed:
     case s: NativeSource.Local  => s.copy(nativeOptions = bundle)
     case s: NativeSource.System => s.copy(nativeOptions = bundle)
 
-  /** Declare a single-identifier licence with its bundled text (relative to the source root). */
-  def licensed(license: String, text: File): NativeSource =
-    withCompliance(compliance.copy(license = license, texts = Seq(LicenseText(license, text))))
-
-  /** Declare the SPDX licence expression and the texts backing it; for a listed licence the texts may be omitted. */
-  def licensed(license: String, texts: LicenseText*): NativeSource =
-    withCompliance(compliance.copy(license = license, texts = texts.toSeq))
-
-  /** Override how this source links into the binary; otherwise it is resolved from its kind (a built library links
-    * statically, a `System` library dynamically).
-    */
-  def relationship(relationship: Relationship): NativeSource =
-    withCompliance(compliance.copy(relationship = relationship))
-
-  /** Attach attribution notices (for example an Apache `NOTICE` file) to reproduce alongside the licence. */
-  def notice(files: File*): NativeSource = withCompliance(compliance.copy(notices = compliance.notices ++ files))
-
-  /** Declare where the corresponding source is available. */
-  def source(uri: URI): NativeSource = withCompliance(compliance.copy(source = Some(uri)))
-
-  /** Declare a written offer for source - contact details, kept separate from a direct [[source]] link. */
-  def writtenOffer(contact: String): NativeSource = withCompliance(compliance.copy(writtenOffer = Some(contact)))
-
-  /** Declare a package identity (a Package URL) used to deduplicate this library when binaries are aggregated. */
-  def identity(purl: String): NativeSource = withCompliance(compliance.copy(identity = Some(purl)))
-
-  def copyright(notice: String): NativeSource = withCompliance(compliance.copy(copyright = Some(notice)))
-
-  /** Attach an originator - the upstream author or organisation. */
-  def originator(who: String): NativeSource = withCompliance(compliance.copy(originator = Some(who)))
-
-  /** Declare third-party components this source bundles, each contained within it (an SPDX `CONTAINS`). */
-  def bundles(components: Component*): NativeSource =
-    withCompliance(compliance.copy(contains = compliance.contains ++ components))
-
-  private def withCompliance(updated: Compliance): NativeSource = this match
+  protected def withCompliance(updated: Compliance): NativeSource = this match
     case s: NativeSource.Git    => s.copy(compliance = updated)
     case s: NativeSource.Local  => s.copy(compliance = updated)
     case s: NativeSource.System => s.copy(compliance = updated)

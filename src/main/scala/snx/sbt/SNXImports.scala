@@ -154,16 +154,12 @@ object SNXImports:
         "Builds the vendored native libraries; yields their archives and include directories.")
 
     /** Aggregates the third-party native licences declared across the binary's resolved classpath into an SPDX 2.3
-      * document and the accompanying texts and notices, written beside the build output. Config-scoped: read it in the
-      * configuration whose binary is being described (`Compile` for an application, `Test` for a test binary).
+      * document and the accompanying texts and notices.
       */
     val licenseReport: TaskKey[File] =
       TaskKey[File]("snxLicenseReport", "Aggregates third-party native licences on the classpath into an SPDX document.")
 
-    /** Configuration namespace for sbt-native-extras. `SNX.Native / crossPaths` is the platform-specific switch:
-      * when true, per-platform source and resource directories are registered and the project publishes its native
-      * content under the OS/arch classifier (with a placeholder main artifact). Defaults to `false`.
-      */
+    /** Configuration namespace for sbt-native-extras. */
     val Native: Configuration = sbt.config("native")
 
     /** Settings that work around sbt/sbt#9117, where the Ivy (and so signed) publish backend drops the Scala Native
@@ -192,6 +188,12 @@ object SNXImports:
 
     /** Lift `module` as an unclassified (plain NIR) [[NativeDependency]]. */
     def plain: NativeDependency = NativeDependency(module).plain
+
+    /** Lift `module` and declare a single-identifier licence with its bundled text (relative to the project). */
+    def licensed(license: String, text: File): NativeDependency = NativeDependency(module).licensed(license, text)
+
+    /** Lift `module` and declare the SPDX licence expression and the texts backing it. */
+    def licensed(license: String, texts: LicenseText*): NativeDependency = NativeDependency(module).licensed(license, texts*)
 
   /** Type a [[NativeTransform]] literal so it infers in a `SNX.config +=`/`++=` (sbt's `Append` does not propagate the
     * element type to a partial-function literal). A `SNX.config :=` propagates it and needs no wrapper.

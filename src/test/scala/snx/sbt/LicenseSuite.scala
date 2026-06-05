@@ -108,6 +108,30 @@ class LicenseSuite extends munit.FunSuite:
       val error = intercept[RuntimeException](LicenseAggregator.aggregate(Seq(entry), artifact, out, new CapturingLogger))
       assert(error.getMessage.nn.contains("a local native-licence document is unreadable"), error.getMessage)
 
+  test("generation warns when an expression references a LicenseRef without supplying its text"):
+    IO.withTemporaryDirectory: root =>
+      val out = new File(root, "out")
+      val log = new CapturingLogger
+      val unbacked =
+        LibrarySpec(
+          "acme",
+          Some("pkg:generic/acme@1"),
+          Some("1"),
+          Relationship.StaticLink,
+          "LicenseRef-acme",
+          Nil,
+          Nil,
+          None,
+          None,
+          None,
+          None,
+          Nil,
+          root)
+      val _ = LicenseGenerator.generate(artifact, Seq(unbacked), out, log)
+      assert(
+        log.messages.exists(message => message.contains("LicenseRef-acme") && message.contains("no licence text")),
+        log.messages.toString)
+
   test("hasMarkers detects a native-licence document in a directory or a jar, gating automatic aggregation"):
     IO.withTemporaryDirectory: root =>
       val manifest = new java.util.jar.Manifest()

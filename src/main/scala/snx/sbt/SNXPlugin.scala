@@ -213,7 +213,7 @@ object SNXPlugin extends AutoPlugin:
     * carry the same base coordinate a consumer derives from the dependency's `ModuleID.name`, so the same library
     * deduplicates whether read from a published document or declared by the consumer.
     */
-  private def coordinate(
+  private[sbt] def coordinate(
     organization: String,
     name: String,
     module: String,
@@ -226,7 +226,7 @@ object SNXPlugin extends AutoPlugin:
   /** The Scala Native cross suffix for this Scala version (for example `_native0.5_3`), derived rather than hardcoded,
     * so the base artefact identity can be recovered from a suffixed module name.
     */
-  private def nativeSuffix(scalaVersion: String, scalaBinaryVersion: String): String =
+  private[sbt] def nativeSuffix(scalaVersion: String, scalaBinaryVersion: String): String =
     CrossVersion(ScalaNativeCrossVersion.binary, scalaVersion, scalaBinaryVersion).fold("")(cross => cross("x").stripPrefix("x"))
 
   /** Fold one [[NativeOptions]] bundle into `cfg`: each channel appends to its matching `nativeConfig` option list. */
@@ -304,7 +304,7 @@ object SNXPlugin extends AutoPlugin:
     * Test via sbt's configuration delegation); a test/runtime-exclusive one contributes only to Test. A dependency
     * declared in both is applied once, in Compile.
     */
-  private def visible(config: String, module: ModuleID): Boolean =
+  private[sbt] def visible(config: String, module: ModuleID): Boolean =
     val configs = declared(module)
     val compileVisible = configs.exists(compileScoped.contains)
     if config == Test.name then configs.exists(testExclusive.contains) && !compileVisible
@@ -313,7 +313,7 @@ object SNXPlugin extends AutoPlugin:
   /** The configurations a `ModuleID` is declared for (comma-separated, each taken before any `->` mapping); an
     * unscoped dependency is `compile`.
     */
-  private def declared(module: ModuleID): Set[String] =
+  private[sbt] def declared(module: ModuleID): Set[String] =
     module.configurations match
       case None        => Set("compile")
       case Some(value) =>
@@ -331,8 +331,7 @@ object SNXPlugin extends AutoPlugin:
 
   /** Build one declared [[NativeSource]] for the resolved platform: `System` builds nothing (link-only), `Local`
     * builds its directory (default `vendor/<name>`), and `Git` clones `ref` then builds it. The build is
-    * cached per library (local scope only - a compiled archive is not safe to reuse across toolchains): on a cache
-    * hit the source is neither fetched nor built and the archives and include directories are restored from the cache.
+    * cached per library.
     */
   private def buildSource(
     source: NativeSource,
@@ -462,7 +461,7 @@ object SNXPlugin extends AutoPlugin:
   /** Resolve [[Relationship.Auto]] from how the library links (kept independent of the native toolchain): a static
     * archive or compiled-in content links statically, a link-only library dynamically. An explicit relationship wins.
     */
-  private def resolveRelationship(relationship: Relationship, static: Boolean): Relationship =
+  private[sbt] def resolveRelationship(relationship: Relationship, static: Boolean): Relationship =
     if relationship == Relationship.Auto then if static then Relationship.StaticLink else Relationship.DynamicLink
     else relationship
 
