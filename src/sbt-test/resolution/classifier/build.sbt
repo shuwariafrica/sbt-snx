@@ -64,8 +64,16 @@ check := Def.uncached {
   assert(!compileFlags.contains("-ltestonly"), s"test-only flag leaked into compile link: $compileFlags")
   assert(testFlags.contains("-lmainlib") && testFlags.contains("-ltestonly"), s"test link missing flags: $testFlags")
   assert(testFlags.count(_ == "-lmainlib") == 1, s"compile flag duplicated in test link: $testFlags")
-  assert(compileFlags.contains("-lssl"), s"options bundle linking missing: $compileFlags")
-  assert(compileC.contains("-I/opt/ssl/include"), s"options bundle compile missing: $compileC")
+  // The ssl bundle above is libc-scoped to Glibc, so it applies only when the toolchain resolves to glibc and
+  // contributes nothing on musl. Asserting both directions proves the libc-scoped match discriminates by toolchain.
+  SNX.platform.value match {
+    case NativePlatform.Linux(_, LinuxLibc.Glibc) =>
+      assert(compileFlags.contains("-lssl"), s"glibc-scoped options bundle linking missing: $compileFlags")
+      assert(compileC.contains("-I/opt/ssl/include"), s"glibc-scoped options bundle compile missing: $compileC")
+    case _ =>
+      assert(!compileFlags.contains("-lssl"), s"glibc-scoped linking leaked off glibc: $compileFlags")
+      assert(!compileC.contains("-I/opt/ssl/include"), s"glibc-scoped compile leaked off glibc: $compileC")
+  }
 
   // Project-level SNX.config: `:=` linking flag, and `+=` nativeTransform compile flag.
   assert(compileFlags.contains("-lproject"), s"project-level SNX.config (:=) missing: $compileFlags")
