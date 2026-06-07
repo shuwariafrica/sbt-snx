@@ -22,16 +22,11 @@ import sbt.librarymanagement.ModuleID
 import snx.NativePlatform
 import snx.TargetPlatform
 
-/** A managed native dependency: a `ModuleID`, whether to inject an OS/arch classifier, the per-platform additive
-  * [[NativeOptions]] it contributes, and its third-party licence-compliance metadata. Its source-built counterpart is
-  * [[NativeSource]]. See [[NativeDependency$ NativeDependency]].
+/** A managed native dependency: a `ModuleID`, whether to inject an OS/arch classifier, and the per-platform additive
+  * [[NativeOptions]] it contributes. Its source-built counterpart is [[NativeSource]]. See
+  * [[NativeDependency$ NativeDependency]].
   */
-final case class NativeDependency(
-  module: ModuleID,
-  classified: Boolean,
-  nativeOptions: PartialFunction[NativePlatform, NativeOptions],
-  compliance: Compliance)
-    extends Licensed[NativeDependency]:
+final case class NativeDependency(module: ModuleID, classified: Boolean, nativeOptions: PartialFunction[NativePlatform, NativeOptions]):
 
   /** Attach the per-platform additive options; unmatched platforms contribute none. */
   infix def options(bundle: PartialFunction[NativePlatform, NativeOptions]): NativeDependency =
@@ -39,8 +34,6 @@ final case class NativeDependency(
 
   /** Resolve as ordinary NIR without an OS/arch classifier, keeping any options. */
   def plain: NativeDependency = copy(classified = false)
-
-  protected def withCompliance(updated: Compliance): NativeDependency = copy(compliance = updated)
 
   private[sbt] def moduleID(target: TargetPlatform): ModuleID =
     if classified then module.classifier(target.classifier) else module
@@ -54,7 +47,7 @@ object NativeDependency:
 
   given CanEqual[NativeDependency, NativeDependency] = CanEqual.derived
 
-  def apply(module: ModuleID): NativeDependency = NativeDependency(module, true, PartialFunction.empty, Compliance.empty)
+  def apply(module: ModuleID): NativeDependency = NativeDependency(module, true, PartialFunction.empty)
 
   def apply(module: ModuleID, classified: Boolean): NativeDependency =
-    NativeDependency(module, classified, PartialFunction.empty, Compliance.empty)
+    NativeDependency(module, classified, PartialFunction.empty)

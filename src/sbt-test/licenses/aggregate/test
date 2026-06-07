@@ -1,4 +1,0 @@
-# Aggregate the third-party native licences declared across a dependency jar (producer) and the consumer's own
-# vendored declarations into a single SPDX 2.3 document: deduplicating by identity, excluding build-only
-# dependencies, and carrying a non-listed licence's text as an extracted-licensing entry.
-> checkReport

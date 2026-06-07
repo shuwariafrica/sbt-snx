@@ -45,21 +45,15 @@ class SNXPluginSuite extends munit.FunSuite:
     assert(SNXPlugin.visible("compile", module("compile,test")))
     assert(!SNXPlugin.visible("test", module("compile,test")))
 
-  test("resolveRelationship resolves Auto by kind and lets an explicit relationship win"):
-    assertEquals(SNXPlugin.resolveRelationship(Relationship.Auto, static = true), Relationship.StaticLink)
-    assertEquals(SNXPlugin.resolveRelationship(Relationship.Auto, static = false), Relationship.DynamicLink)
-    assertEquals(SNXPlugin.resolveRelationship(Relationship.DynamicLink, static = true), Relationship.DynamicLink)
-
-  test("nativeSuffix derives the cross suffix and coordinate strips it to a platform-independent base identity"):
-    assertEquals(SNXPlugin.nativeSuffix("3.8.3", "3"), "_native0.5_3")
-    val suffixed = SNXPlugin.coordinate("africa.shuwari", "snxlib", "snxlib_native0.5_3", "0.1.0", "3.8.3", "3")
-    assertEquals(suffixed.identity, "pkg:maven/africa.shuwari/snxlib@0.1.0")
-    val plain = SNXPlugin.coordinate("africa.shuwari", "snxlib", "snxlib", "0.1.0", "3.8.3", "3")
-    assertEquals(plain.identity, "pkg:maven/africa.shuwari/snxlib@0.1.0")
-
   test("optionsFor folds the per-platform bundle, contributing none on an unmatched platform"):
     val dependency = NativeDependency(ModuleID("org", "lib", "1"))
       .options { case NativePlatform.Linux(_, _) => NativeOptions().withLinking("-lfoo") }
     assertEquals(dependency.optionsFor(NativePlatform.Linux(Arch.X86_64, LinuxLibc.Glibc)).linking, Seq("-lfoo"))
     assertEquals(dependency.optionsFor(NativePlatform.Osx(Arch.Aarch64)), NativeOptions.empty)
+
+  test("optionsFor honours a libc-scoped match, contributing only on the matching libc"):
+    val dependency = NativeDependency(ModuleID("org", "lib", "1"))
+      .options { case NativePlatform.Linux(_, LinuxLibc.Glibc) => NativeOptions().withLinking("-lssl") }
+    assertEquals(dependency.optionsFor(NativePlatform.Linux(Arch.X86_64, LinuxLibc.Glibc)).linking, Seq("-lssl"))
+    assertEquals(dependency.optionsFor(NativePlatform.Linux(Arch.X86_64, LinuxLibc.Musl)), NativeOptions.empty)
 end SNXPluginSuite

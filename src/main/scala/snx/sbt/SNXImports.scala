@@ -30,8 +30,6 @@ import sbt.SettingKey
 import sbt.TaskKey
 import sbt.librarymanagement.ModuleID
 
-import java.io.File
-
 import scala.scalanative.sbtplugin.ScalaNativeCrossVersion
 
 /** Types, settings, and syntax auto-imported into `build.sbt` by [[SNXPlugin$ SNXPlugin]]. The settings and tasks live
@@ -71,15 +69,6 @@ object SNXImports:
 
   type NativeArtefacts = snx.sbt.NativeArtefacts
   val NativeArtefacts: snx.sbt.NativeArtefacts.type = snx.sbt.NativeArtefacts
-
-  type LicenseText = snx.sbt.LicenseText
-  val LicenseText: snx.sbt.LicenseText.type = snx.sbt.LicenseText
-
-  type Component = snx.sbt.Component
-  val Component: snx.sbt.Component.type = snx.sbt.Component
-
-  type Relationship = snx.sbt.Relationship
-  val Relationship: snx.sbt.Relationship.type = snx.sbt.Relationship
 
   type NativeConfig = scala.scalanative.build.NativeConfig
   val NativeConfig: scala.scalanative.build.NativeConfig.type = scala.scalanative.build.NativeConfig
@@ -153,12 +142,6 @@ object SNXImports:
         "snxVendoredArtefacts",
         "Builds the vendored native libraries; yields their archives and include directories.")
 
-    /** Aggregates the third-party native licences declared across the binary's resolved classpath into an SPDX 2.3
-      * document and the accompanying texts and notices.
-      */
-    val licenseReport: TaskKey[File] =
-      TaskKey[File]("snxLicenseReport", "Aggregates third-party native licences on the classpath into an SPDX document.")
-
     /** Configuration namespace for sbt-native-extras. */
     val Native: Configuration = sbt.config("native")
 
@@ -188,12 +171,6 @@ object SNXImports:
 
     /** Lift `module` as an unclassified (plain NIR) [[NativeDependency]]. */
     def plain: NativeDependency = NativeDependency(module).plain
-
-    /** Lift `module` and declare a single-identifier licence with its bundled text (relative to the project). */
-    def licensed(license: String, text: File): NativeDependency = NativeDependency(module).licensed(license, text)
-
-    /** Lift `module` and declare the SPDX licence expression and the texts backing it. */
-    def licensed(license: String, texts: LicenseText*): NativeDependency = NativeDependency(module).licensed(license, texts*)
 
   /** Type a [[NativeTransform]] literal so it infers in a `SNX.config +=`/`++=` (sbt's `Append` does not propagate the
     * element type to a partial-function literal). A `SNX.config :=` propagates it and needs no wrapper.
