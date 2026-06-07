@@ -1,0 +1,15 @@
+# A cold build runs cmake; after dropping the build dir and reloading (clears task memoisation, the action cache
+# persists on disk), the rebuild must be a cache hit - cmake does not rerun and the archive is restored.
+> snxVendoredArtefacts
+> assertBuilt
+> removeBuild
+> reload
+> snxVendoredArtefacts
+> assertCached
+
+# Editing a vendored source changes its content hash, so the cache key changes and the next build is a miss -
+# cmake reruns and the build dir reappears.
+$ copy-file changes/answer.c vendor/answer/answer.c
+> reload
+> snxVendoredArtefacts
+> assertBuilt

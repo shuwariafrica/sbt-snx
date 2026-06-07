@@ -7,22 +7,28 @@ SNX.target := TargetPlatform(OS.Linux, Arch.X86_64)
 // Construction-level cover of the `%%` coordinate and the DSL forms (no `update` runs here, so these
 // need not resolve - a real `%%` classified artefact does not exist).
 SNX.dependencies += "com.example" %% "blas" % "1.2" // bare lift via given Conversion
-SNX.dependencies += ("com.example" %% "uv" % "1.4" linking { case NativePlatform.Linux(_, _) => Seq("-lmainlib") })
+SNX.dependencies += ("com.example" %% "uv" % "1.4" options { case NativePlatform.Linux(_, _) => NativeOptions().withLinking("-lmainlib") })
 SNX.dependencies += ("com.example" %% "headers" % "1.0").plain
-SNX.dependencies += (("com.example" %% "tkit" % "1.0" % Test).plain linking { case NativePlatform.Linux(_, _) => Seq("-ltestonly") })
+SNX.dependencies += (("com.example" %% "tkit" % "1.0" % Test).plain options {
+  case NativePlatform.Linux(_, _) => NativeOptions().withLinking("-ltestonly")
+})
 
-// Full additive bundle + libc-scoped match (resolved from the toolchain), via the nested Options type.
+// Full additive bundle + libc-scoped match (resolved from the toolchain), composed channel-wise with `++`.
 SNX.dependencies += ("com.example" %% "ssl" % "3" options {
   case NativePlatform.Linux(_, LinuxLibc.Glibc) =>
-    NativeDependency.Options.empty.withLinking("-lssl").withCompile("-I/opt/ssl/include")
+    NativeOptions().withLinking("-lssl") ++ NativeOptions().withCompile("-I/opt/ssl/include")
 })
 
 // Same module in two scopes with different options - per-config correctness (no leak, no double).
-SNX.dependencies += ("com.example" %% "dup" % "1.0" linking { case NativePlatform.Linux(_, _) => Seq("-ldup-compile") })
-SNX.dependencies += (("com.example" %% "dup" % "1.0" % Test).plain linking { case NativePlatform.Linux(_, _) => Seq("-ldup-test") })
+SNX.dependencies += ("com.example" %% "dup" % "1.0" options { case NativePlatform.Linux(_, _) => NativeOptions().withLinking("-ldup-compile") })
+SNX.dependencies += (("com.example" %% "dup" % "1.0" % Test).plain options {
+  case NativePlatform.Linux(_, _) => NativeOptions().withLinking("-ldup-test")
+})
 
 // Compound config string - declared for both compile and test; applied once, in Compile.
-SNX.dependencies += (("com.example" %% "both" % "1.0" % "compile,test").plain linking { case NativePlatform.Linux(_, _) => Seq("-lboth") })
+SNX.dependencies += (("com.example" %% "both" % "1.0" % "compile,test").plain options {
+  case NativePlatform.Linux(_, _) => NativeOptions().withLinking("-lboth")
+})
 
 // Project-level transform - `:=` is the primary idiom (no wrapper); mixed `c => ...` / `_.withX(...)` bodies.
 SNX.config := Seq({
@@ -58,8 +64,16 @@ check := Def.uncached {
   assert(!compileFlags.contains("-ltestonly"), s"test-only flag leaked into compile link: $compileFlags")
   assert(testFlags.contains("-lmainlib") && testFlags.contains("-ltestonly"), s"test link missing flags: $testFlags")
   assert(testFlags.count(_ == "-lmainlib") == 1, s"compile flag duplicated in test link: $testFlags")
-  assert(compileFlags.contains("-lssl"), s"options bundle linking missing: $compileFlags")
-  assert(compileC.contains("-I/opt/ssl/include"), s"options bundle compile missing: $compileC")
+  // The ssl bundle above is libc-scoped to Glibc, so it applies only when the toolchain resolves to glibc and
+  // contributes nothing on musl. Asserting both directions proves the libc-scoped match discriminates by toolchain.
+  SNX.platform.value match {
+    case NativePlatform.Linux(_, LinuxLibc.Glibc) =>
+      assert(compileFlags.contains("-lssl"), s"glibc-scoped options bundle linking missing: $compileFlags")
+      assert(compileC.contains("-I/opt/ssl/include"), s"glibc-scoped options bundle compile missing: $compileC")
+    case _ =>
+      assert(!compileFlags.contains("-lssl"), s"glibc-scoped linking leaked off glibc: $compileFlags")
+      assert(!compileC.contains("-I/opt/ssl/include"), s"glibc-scoped compile leaked off glibc: $compileC")
+  }
 
   // Project-level SNX.config: `:=` linking flag, and `+=` nativeTransform compile flag.
   assert(compileFlags.contains("-lproject"), s"project-level SNX.config (:=) missing: $compileFlags")

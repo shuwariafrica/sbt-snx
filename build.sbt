@@ -18,6 +18,23 @@ semanticdbEnabled := true
 
 addSbtPlugin("org.scala-native" % "sbt-scala-native" % "0.5.12")
 
+libraryDependencies += "org.scalameta" %% "munit" % "1.3.2" % Test
+testFrameworks += new TestFramework("munit.Framework")
+
+// Bakes the plugin version into a constant so the vendored-build action cache invalidates on a plugin upgrade.
+Compile / sourceGenerators += Def.task {
+  val file = (Compile / sourceManaged).value / "snx" / "sbt" / "BuildInfo.scala"
+  IO.write(
+    file,
+    s"""package snx.sbt
+       |
+       |private[sbt] object BuildInfo:
+       |  final val version: String = "${version.value}"
+       |""".stripMargin
+  )
+  Seq(file)
+}.taskValue
+
 def packageSettings: Seq[Def.Setting[?]] = Seq(
   packageOptions += Package.ManifestAttributes(
     "Specification-Title" -> name.value,
@@ -39,8 +56,15 @@ def scriptedSettings: Seq[Def.Setting[?]] = Seq(
   } ++ Seq("-Xmx1024M", s"-Dplugin.version=${version.value}", s"-Duser.home=${sys.props.getOrElse("user.home", "")}"),
   scriptedBufferLog := false,
   scripted / excludeFilter := {
-    if (sys.env.contains("SNX_EXPECT_OS")) NothingFilter
-    else new SimpleFileFilter(_.getName == "detect")
+    val os = sys.env.get("SNX_EXPECT_OS")
+    val staticCapable = sys.env.get("SNX_EXPECT_ENV").exists(Set("musl", "msvc").contains)
+    val nonLinux = os.exists(_ != "linux")
+    new SimpleFileFilter(file => {
+      val name = file.getName
+      (name == "detect" && os.isEmpty) || // needs the injected platform ground truth (SNX_EXPECT_OS)
+      (name == "static" && !staticCapable) || // needs a fully-static-capable environment (musl or MSVC; not glibc/MinGW/osx)
+      (name != "detect" && name != "static" && nonLinux)
+    })
   }
 )
 
