@@ -1,0 +1,9 @@
+# publish the under-declaring vendor so the producer, consumer, and local project can resolve it
+> vendor/publishLocal
+# the producer patches a RUNTIME-scoped vendor dep via .options; the patch propagates into the producer's descriptor
+# (it would be dropped were the export scope Compile-visible)
+> checkPatch
+# the consumer links the producer and folds the propagated patch; the unresolvable library fails the link (completeness)
+-> consumer/Compile/snxLink
+# the local project patches vendor for its OWN link; .options folds into that link too, where the unresolvable library fails it
+-> local/Compile/snxLink

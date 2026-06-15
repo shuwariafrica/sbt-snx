@@ -1,0 +1,7 @@
+# `run` links the executable (compiling the unmanaged native source probe.c), forwards arguments and environment,
+# and propagates a zero exit code.
+> run alpha beta
+# An unchanged rebuild relinks nothing, including the native source - determinism with native inputs.
+> recordLink
+> reload
+> checkNoRelink

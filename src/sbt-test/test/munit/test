@@ -1,0 +1,3 @@
+# The plugin links a native test binary, then discovers and runs its tests through the framework (fork := false).
+> check
+> test

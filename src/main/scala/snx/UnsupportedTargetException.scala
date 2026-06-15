@@ -17,7 +17,5 @@
  ****************************************************************/
 package snx
 
-/** Signals an operating system, architecture, or toolchain libc/ABI that sbt-snx does not support. Thrown by
-  * [[OS.parse]], [[Arch.parse]], [[TargetPlatform.parse]], and [[NativePlatform.parse]].
-  */
+/** Signals an operating system, architecture, or toolchain libc/ABI that sbt-snx does not support. */
 final class UnsupportedTargetException(message: String) extends RuntimeException(message)

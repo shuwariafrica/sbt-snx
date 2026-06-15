@@ -1,0 +1,6 @@
+# The SNX.clang override is threaded into the toolchain: linking the executable invokes the wrapper, which records
+# the call and delegates to the real clang. Gated to Linux (the wrapper is a shell script); the override mechanism
+# itself is platform-independent.
+> prepareClang
+> run
+> checkClang

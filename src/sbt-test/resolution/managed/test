@@ -1,0 +1,4 @@
+# The managed-dependency DSL (% NativeClassifier, forwarded config builders in either order, options, and the
+# two-way conversion incl. the bare lift) compiles through the plugin autoImport, while plain `% Test` resolves
+# through sbt's own path.
+> check

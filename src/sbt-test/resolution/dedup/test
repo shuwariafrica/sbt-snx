@@ -1,0 +1,4 @@
+# build the static archive both libraries' descriptors force-load (a non-static global that would collide on a double load)
+> consumer/buildDupArchive
+# the consumer folds a's and b's descriptors; the shared whole-archive is de-duplicated and the link succeeds (a double would fail)
+> consumer/Compile/snxLink

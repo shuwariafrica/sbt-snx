@@ -1,0 +1,11 @@
+# publish a classified and an unclassified NIR library to a maven-layout file repo
+> cls/publish
+> uni/publish
+# the unclassified library carries the descriptor in its main (only) jar; the classified one under the classifier
+> checkMain
+# swap to a consumer build that resolves both from the repo (no inter-project short-circuit) and reads each descriptor
+$ copy-file changes/consumer.sbt build.sbt
+> reload
+> checkResolved
+# the consumer's link folds the descriptors from the RESOLVED jars and fails on the propagated, unresolvable -l
+-> app/Compile/snxLink

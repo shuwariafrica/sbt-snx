@@ -16,13 +16,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  SBT_OPTS: "-Xmx4G -Xss4M -XX:ReservedCodeCacheSize=512M"
+  SBT_OPTS: "-Xmx7G -Xss4M -XX:ReservedCodeCacheSize=512M"
   JDK_VERSION: "17"
   LLVM_VERSION: "22"
 
 jobs:
-  tests-platform-specific:
-    name: "[${{ matrix.os }}${{ matrix.env && format(' ({0})', matrix.env) || '' }}: ${{ matrix.arch }}] Platform dependent tests"
+  tests:
+    name: "[${{ matrix.os }}${{ matrix.env && format(' ({0})', matrix.env) || '' }}: ${{ matrix.arch }}] Tests"
     strategy:
       fail-fast: false
       matrix:
@@ -59,6 +59,23 @@ jobs:
         uses: sbt/setup-sbt@v1
       - name: Set up Coursier cache
         uses: coursier/cache-action@v8
+      - name: Generate disposable signing key
+        if: ${{ matrix.os == 'linux' }}
+        shell: bash
+        run: |
+          export GNUPGHOME="$PWD/.gnupg-ci"
+          mkdir -p "$GNUPGHOME"; chmod 700 "$GNUPGHOME"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          printf 'pinentry-mode loopback\nbatch\n' > "$GNUPGHOME/gpg.conf"
+          gpg --batch --gen-key <<'EOF'
+          %no-protection
+          Key-Type: RSA
+          Key-Length: 2048
+          Name-Real: snx ci
+          Name-Email: ci@snx.local
+          Expire-Date: 0
+          %commit
+          EOF
       - name: "[macOS] Install LLVM"
         if: ${{ matrix.os == 'osx' }}
         shell: bash
@@ -85,38 +102,13 @@ jobs:
           # MSVC-targeting system clang entirely. vcvarsall is intentionally NOT run for this cell.
           C:\msys64\usr\bin\pacman -S --needed --noconfirm mingw-w64-clang-x86_64-toolchain
           "LLVM_BIN=C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-      - name: "[${{ matrix.classifier }}${{ matrix.env && format(' ({0})', matrix.env) || '' }}]: Platform-specific scripted tests"
+          "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      - name: "[${{ matrix.classifier }}${{ matrix.env && format(' ({0})', matrix.env) || '' }}]: Unit tests"
         shell: bash
-        run: ./project/scripts/run-sbt.sh -batch "scripted platform/detect"
-
-  tests:
-    name: "Cross-platform tests"
-    runs-on: ubuntu-24.04
-    container: shuwariafrica/el10-jdk:17
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: Set up Coursier cache
-        uses: coursier/cache-action@v8
-      - name: Generate disposable signing key
-        run: |
-          export GNUPGHOME="$(mktemp -d)"
-          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
-          printf 'pinentry-mode loopback\nbatch\n' > "$GNUPGHOME/gpg.conf"
-          gpg --batch --gen-key <<'EOF'
-          %no-protection
-          Key-Type: RSA
-          Key-Length: 2048
-          Name-Real: snx ci
-          Name-Email: ci@snx.local
-          Expire-Date: 0
-          %commit
-          EOF
-      - name: "Scripted tests"
-        run: sbt "scripted"
+        run: ./project/scripts/run-sbt.sh -batch "test"
+      - name: "[${{ matrix.classifier }}${{ matrix.env && format(' ({0})', matrix.env) || '' }}]: Scripted tests"
+        shell: bash
+        run: ./project/scripts/run-sbt.sh -batch "scripted"
 
   static-analysis:
     name: Static analysis
@@ -161,7 +153,7 @@ jobs:
 
   publish:
     name: Publish
-    needs: [ tests-platform-specific, tests, static-analysis ]
+    needs: [ tests, static-analysis ]
     if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
     container: shuwariafrica/el10-jdk:17

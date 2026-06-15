@@ -1,4 +1,4 @@
-scalaVersion := "3.8.3"
+scalaVersion := "3.8.4"
 name := "sbt-snx"
 organization := "africa.shuwari"
 startYear := Some(2026)
@@ -16,7 +16,23 @@ scriptedSettings
 enablePlugins(SbtPlugin)
 semanticdbEnabled := true
 
-addSbtPlugin("org.scala-native" % "sbt-scala-native" % "0.5.12")
+libraryDependencies += Dependencies.`scala-native-tools`
+libraryDependencies += Dependencies.`scala-native-test-runner`
+libraryDependencies += Dependencies.munit % Test
+testFrameworks += new TestFramework("munit.Framework")
+
+Compile / sourceGenerators += Def.task {
+  val file = (Compile / sourceManaged).value / "snx" / "sbt" / "BuildInfo.scala"
+  IO.write(
+    file,
+    s"""package snx.sbt
+       |
+       |private[sbt] object BuildInfo:
+       |  inline val nativeVersion = "${Dependencies.`scala-native-tools`.revision}"
+       |""".stripMargin
+  )
+  Seq(file)
+}.taskValue
 
 def packageSettings: Seq[Def.Setting[?]] = Seq(
   packageOptions += Package.ManifestAttributes(
@@ -36,11 +52,26 @@ def packageSettings: Seq[Def.Setting[?]] = Seq(
 def scriptedSettings: Seq[Def.Setting[?]] = Seq(
   scriptedLaunchOpts ++= Seq("classifier", "os", "env").flatMap { axis =>
     sys.env.get(s"SNX_EXPECT_${axis.toUpperCase}").map(value => s"-Dsnx.expect.$axis=$value")
-  } ++ Seq("-Xmx1024M", s"-Dplugin.version=${version.value}", s"-Duser.home=${sys.props.getOrElse("user.home", "")}"),
+  } ++ Seq("-Xmx3G", "-Xss2M", s"-Dplugin.version=${version.value}", s"-Duser.home=${sys.props.getOrElse("user.home", "")}"),
   scriptedBufferLog := false,
   scripted / excludeFilter := {
-    if (sys.env.contains("SNX_EXPECT_OS")) NothingFilter
-    else new SimpleFileFilter(_.getName == "detect")
+    val os = sys.env.get("SNX_EXPECT_OS")
+    val env = sys.env.get("SNX_EXPECT_ENV")
+    // detect needs the injected platform ground truth (SNX_EXPECT_OS) the CI matrix sets per cell; static executables
+    // need musl or MSVC; the library C-driver harness, the shell-script clang wrapper, the whole-archive
+    // de-duplication link, and the zlib-backed integration capstone are Linux-only (the name-form whole-archive
+    // renders nothing on macOS; the capstone's C + zlib path is Linux). Everything else (including wholearchive) runs
+    // wherever clang is.
+    new SimpleFileFilter(file =>
+      file.getName match {
+        case "detect"  => os.isEmpty
+        case "static"  => !env.exists(Set("musl", "msvc"))
+        case "library" => os.exists(_ != "linux")
+        case "clang"   => os.exists(_ != "linux")
+        case "dedup"   => os.exists(_ != "linux")
+        case "hello"   => os.exists(_ != "linux")
+        case _         => false
+      })
   }
 )
 
