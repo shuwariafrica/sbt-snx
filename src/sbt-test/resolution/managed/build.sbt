@@ -4,7 +4,7 @@ scalaVersion := "3.8.4"
 
 // Plain `% Test` must resolve through sbt's own path (the libraryDependencies element type is ModuleID), untouched
 // by the NativeDependency conversions.
-libraryDependencies += "org.scalameta" %% "munit" % "1.3.2" % Test
+libraryDependencies += "org.scalameta" %% "munit" % "1.3.3" % Test
 
 // The managed-dependency DSL - the `% NativeClassifier` marker, the forwarded config builder in either order, and
 // `options` - all reach NativeDependency through the plugin autoImport (the marker argument selects the conversion).
@@ -12,7 +12,7 @@ SNX.dependencies ++= Seq(
   "org.example" %% "lib" % "1.0" % NativeClassifier,
   "org.example" %% "lib" % "1.0" % NativeClassifier % Test,
   "org.example" %% "lib" % "1.0" % Test % NativeClassifier,
-  "org.example" %% "lib" % "1.0" % NativeClassifier options { case _ => Usage.libraries("z") }
+  ("org.example" %% "lib" % "1.0" % NativeClassifier).options { case _ => Usage.libraries("z") }
 )
 
 // The bare lift: a plain ModuleID where a NativeDependency is expected.

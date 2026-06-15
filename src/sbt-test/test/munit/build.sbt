@@ -2,7 +2,7 @@ enablePlugins(SNXPlugin)
 
 scalaVersion := "3.8.4"
 
-libraryDependencies += "org.scalameta" %% "munit" % "1.3.2" % Test
+libraryDependencies += "org.scalameta" %% "munit" % "1.3.3" % Test
 testFrameworks += new TestFramework("munit.Framework")
 
 val check = taskKey[Unit]("assert the plugin discovers native tests through the test framework")
