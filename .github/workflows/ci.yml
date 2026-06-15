@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  SBT_OPTS: "-Xmx4G -Xss4M -XX:ReservedCodeCacheSize=512M"
+  SBT_OPTS: "-Xmx7G -Xss4M -XX:ReservedCodeCacheSize=512M"
   JDK_VERSION: "17"
   LLVM_VERSION: "22"
 
@@ -102,6 +102,7 @@ jobs:
           # MSVC-targeting system clang entirely. vcvarsall is intentionally NOT run for this cell.
           C:\msys64\usr\bin\pacman -S --needed --noconfirm mingw-w64-clang-x86_64-toolchain
           "LLVM_BIN=C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
       - name: "[${{ matrix.classifier }}${{ matrix.env && format(' ({0})', matrix.env) || '' }}]: Unit tests"
         shell: bash
         run: ./project/scripts/run-sbt.sh -batch "test"
