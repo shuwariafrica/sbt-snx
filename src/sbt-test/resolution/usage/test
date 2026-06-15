@@ -1,0 +1,4 @@
+# the producer exports a per-platform link requirement, written into its usage descriptor
+> checkDescriptor
+# the consumer resolves the producer and folds that requirement into its link; the unresolvable library fails the link
+-> consumer/Compile/snxLink

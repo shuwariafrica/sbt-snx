@@ -1,7 +1,0 @@
-# Publish a classified native library, then resolve it from a fresh consumer build via the injected classifier.
-> publish
-$ exists target/repo/africa/shuwari/snxlib_native0.5_3/0.1.0/snxlib_native0.5_3-0.1.0-linux-x86_64.jar
-$ delete build.sbt
-$ copy-file changes/consumer.sbt build.sbt
-> reload
-> check

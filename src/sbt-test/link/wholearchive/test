@@ -1,0 +1,6 @@
+# Build a static archive whose only object (an __attribute__((constructor))) no symbol references, then force-link
+# the whole archive. With whole-archive the constructor runs at startup and writes the sentinel; without it the
+# linker drops the object. Runs on every cell - the File overload is valid on every platform.
+> buildArchive
+> run
+> checkWholeArchive

@@ -1,5 +1,0 @@
-# A vendored Git source: clone a local repository at the pinned tag v1, build it with cmake, and link a binary
-# against the built symbol. setupRepo creates the repo offline (no network), so this runs anywhere.
-> setupRepo
-> check
-> Compile/nativeLink

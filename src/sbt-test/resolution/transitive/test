@@ -1,0 +1,4 @@
+# an intermediate library exports only its own requirement, never re-exporting a dependency's (the producer never double-counts)
+> checkOwnOnly
+# the executable folds the transitive requirement from base through the classpath; the unresolvable library fails the link
+-> app/Compile/snxLink

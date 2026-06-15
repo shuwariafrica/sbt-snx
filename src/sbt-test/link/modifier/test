@@ -1,0 +1,3 @@
+# the platform-matched Modifier.platform injects an unresolvable library, so the link fails on it - proving the
+# modifier compiled at `+=` (the carrier's purpose) and was applied to the resolved runtime's link
+-> Compile/snxLink

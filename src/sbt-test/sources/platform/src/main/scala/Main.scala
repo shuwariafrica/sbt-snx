@@ -1,10 +1,11 @@
 import scala.scalanative.unsafe.*
 
-@extern object plat:
-  def snx_answer(): CInt = extern
+@extern
+object capi:
+  def snx_plat_value(): CLongLong = extern
 
-// References Plat (from the scala-linux source dir) and snx_answer (from resources-linux/scala-native), so a
-// successful compile proves the platform source dir and a successful link proves the platform .c.
 object Main:
   def main(args: Array[String]): Unit =
-    println(s"${Plat.name}: ${plat.snx_answer()}")
+    assert(Plat.name.nonEmpty, "per-platform Scala source (scalanative-<os>/Plat.scala) was not on the source path")
+    assert(capi.snx_plat_value() == 1L, "per-platform native source (resources-<os>/scala-native/plat.c) was not compiled")
+    println(s"snx-sources-${Plat.name}")

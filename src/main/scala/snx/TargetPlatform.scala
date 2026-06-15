@@ -22,12 +22,10 @@ import java.util.Locale
 /** A native target: an [[OS]] paired with an [[Arch]]. See [[TargetPlatform$ TargetPlatform]] for construction,
   * parsing, and the `classifier` rendering.
   */
-final case class TargetPlatform(os: OS, arch: Arch)
+final case class TargetPlatform(os: OS, arch: Arch) derives CanEqual
 
 /** Factory, parser, and `classifier` rendering for [[TargetPlatform]]. */
 object TargetPlatform:
-
-  given CanEqual[TargetPlatform, TargetPlatform] = CanEqual.derived
 
   /** Parse operating-system and architecture identifiers (host `os.name` / `os.arch` or Scala Native target-triple
     * components) into a [[TargetPlatform]].
@@ -36,6 +34,10 @@ object TargetPlatform:
     *   if either component is unsupported.
     */
   def parse(os: String, arch: String): TargetPlatform = TargetPlatform(OS.parse(os), Arch.parse(arch))
+
+  /** Every supported target: each [[Arch]] of each [[OS]]. */
+  val all: Seq[TargetPlatform] =
+    for os <- OS.values.toSeq; arch <- Arch.values.toSeq yield TargetPlatform(os, arch)
 
   extension (target: TargetPlatform)
     /** The classifier `<os>-<arch>` (for example `osx-aarch_64`). */

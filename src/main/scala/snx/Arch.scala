@@ -20,14 +20,12 @@ package snx
 /** Architecture axis of a native [[TargetPlatform]], carrying the classifier token it renders to. See [[Arch$ Arch]] to
   * parse an identifier.
   */
-enum Arch(val token: String):
+enum Arch(val token: String) derives CanEqual:
   case X86_64 extends Arch("x86_64")
   case Aarch64 extends Arch("aarch_64")
 
 /** Parser for [[Arch]]. */
 object Arch:
-
-  given CanEqual[Arch, Arch] = CanEqual.derived
 
   /** Parse a host `os.arch` or a Scala Native target-triple architecture component into a supported [[Arch]].
     *

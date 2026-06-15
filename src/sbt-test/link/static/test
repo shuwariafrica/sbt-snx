@@ -1,0 +1,5 @@
+# A static executable links and runs where the platform supports it (musl or MSVC); this fixture is gated to those
+# cells by the scripted excludeFilter. On Linux the binary is asserted to carry no dynamic dependencies. The
+# fail-fast on unsupported platforms is covered by LinkSuite.
+> run
+> checkStatic

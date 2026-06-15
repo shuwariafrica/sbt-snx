@@ -17,37 +17,54 @@
  ****************************************************************/
 package snx.sbt
 
+import sbt.librarymanagement.Configuration
 import sbt.librarymanagement.ModuleID
 
-import snx.NativePlatform
-import snx.TargetPlatform
+import scala.annotation.targetName
 
-/** A managed native dependency: a `ModuleID`, whether to inject an OS/arch classifier, and the per-platform additive
-  * [[NativeOptions]] it contributes. Its source-built counterpart is [[NativeSource]]. See
-  * [[NativeDependency$ NativeDependency]].
+import snx.NativeRuntime
+
+/** Marker for `moduleID % NativeClassifier`: resolve the dependency under the build's OS/arch classifier. */
+object NativeClassifier
+
+/** A managed native dependency: a fluent `ModuleID` superset that additionally carries whether to resolve under the
+  * build's OS/arch classifier (`% NativeClassifier`) and the per-platform link [[Usage]] requirements it contributes
+  * (`options`). The requirements supplement an under-declaring dependency - one that ships no `native.json` of its
+  * own - so they fold into this project's link AND propagate into this project's published descriptor, reaching every
+  * downstream consumer. The dependency builders are forwarded, each returning a [[NativeDependency]]; a `ModuleID`
+  * lifts into one through the conversions in [[SNXImports$ SNXImports]]. See [[NativeDependency$ NativeDependency]].
   */
-final case class NativeDependency(module: ModuleID, classified: Boolean, nativeOptions: PartialFunction[NativePlatform, NativeOptions]):
+final case class NativeDependency private[sbt] (
+  module: ModuleID,
+  classified: Boolean,
+  requirements: PartialFunction[NativeRuntime, Usage]
+) derives CanEqual:
 
-  /** Attach the per-platform additive options; unmatched platforms contribute none. */
-  infix def options(bundle: PartialFunction[NativePlatform, NativeOptions]): NativeDependency =
-    copy(nativeOptions = bundle)
+  /** Resolve under the build's OS/arch classifier. */
+  @targetName("classified")
+  def %(marker: NativeClassifier.type): NativeDependency = copy(classified = true)
 
-  /** Resolve as ordinary NIR without an OS/arch classifier, keeping any options. */
-  def plain: NativeDependency = copy(classified = false)
+  /** Restrict to a configuration (for example `Test`). */
+  @targetName("configuration")
+  def %(configuration: Configuration): NativeDependency = copy(module = module.withConfigurations(Some(configuration.name)))
 
-  private[sbt] def moduleID(target: TargetPlatform): ModuleID =
-    if classified then module.classifier(target.classifier) else module
+  /** Restrict to the named configurations. */
+  @targetName("configurations")
+  def %(configurations: String): NativeDependency = copy(module = module.withConfigurations(Some(configurations)))
 
-  private[sbt] def optionsFor(platform: NativePlatform): NativeOptions =
-    nativeOptions.applyOrElse(platform, (_: NativePlatform) => NativeOptions.empty)
+  /** Attach the per-platform link requirements this dependency needs but does not declare itself; platforms the
+    * partial function does not match contribute nothing.
+    */
+  infix def options(requirements: PartialFunction[NativeRuntime, Usage]): NativeDependency = copy(requirements = requirements)
+
+  def exclude(org: String, name: String): NativeDependency = copy(module = module.exclude(org, name))
+  def intransitive(): NativeDependency = copy(module = module.intransitive())
+  def changing(): NativeDependency = copy(module = module.changing())
+  def force(): NativeDependency = copy(module = module.force())
 end NativeDependency
 
-/** Factories for [[NativeDependency]]. */
+/** Factory for [[NativeDependency]]. */
 object NativeDependency:
 
-  given CanEqual[NativeDependency, NativeDependency] = CanEqual.derived
-
-  def apply(module: ModuleID): NativeDependency = NativeDependency(module, true, PartialFunction.empty)
-
-  def apply(module: ModuleID, classified: Boolean): NativeDependency =
+  private[sbt] def apply(module: ModuleID, classified: Boolean): NativeDependency =
     NativeDependency(module, classified, PartialFunction.empty)

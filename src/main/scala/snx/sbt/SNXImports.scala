@@ -17,22 +17,17 @@
  ****************************************************************/
 package snx.sbt
 
-import sbt.Configuration
-import sbt.CrossVersion
-import sbt.Disabled
-import sbt.Keys.crossVersion
-import sbt.Keys.moduleName
-import sbt.Keys.projectID
-import sbt.Keys.scalaBinaryVersion
-import sbt.Keys.scalaVersion
-import sbt.Setting
+import sbt.Def
+import sbt.Project
+import sbt.ProjectMatrix
 import sbt.SettingKey
 import sbt.TaskKey
+import sbt.VirtualAxis
 import sbt.librarymanagement.ModuleID
 
-import scala.scalanative.sbtplugin.ScalaNativeCrossVersion
+import java.io.File
 
-/** Types, settings, and syntax auto-imported into `build.sbt` by [[SNXPlugin$ SNXPlugin]]. The settings and tasks live
+/** Types, settings, and tasks auto-imported into `build.sbt` by [[SNXPlugin$ SNXPlugin]]. The settings and tasks live
   * under [[SNXImports.SNX$ SNX]] so they never clash with sbt or Scala Native keys.
   */
 object SNXImports:
@@ -46,35 +41,42 @@ object SNXImports:
   type Arch = snx.Arch
   val Arch: snx.Arch.type = snx.Arch
 
-  type NativePlatform = snx.NativePlatform
-  val NativePlatform: snx.NativePlatform.type = snx.NativePlatform
+  type NativeRuntime = snx.NativeRuntime
+  val NativeRuntime: snx.NativeRuntime.type = snx.NativeRuntime
 
-  type LinuxLibc = snx.LinuxLibc
-  val LinuxLibc: snx.LinuxLibc.type = snx.LinuxLibc
+  type ABI[A <: snx.OS] = snx.ABI[A]
+  val ABI: snx.ABI.type = snx.ABI
 
-  type WindowsABI = snx.WindowsABI
-  val WindowsABI: snx.WindowsABI.type = snx.WindowsABI
+  type Native = snx.sbt.Native
+  val Native: snx.sbt.Native.type = snx.sbt.Native
+
+  type Contribution = snx.sbt.Contribution
+  val Contribution: snx.sbt.Contribution.type = snx.sbt.Contribution
+
+  type Modifier[A] = snx.sbt.Modifier[A]
+  val Modifier: snx.sbt.Modifier.type = snx.sbt.Modifier
+
+  type Usage = snx.sbt.Usage
+  val Usage: snx.sbt.Usage.type = snx.sbt.Usage
+
+  type Deliverable = snx.sbt.Deliverable
+  val Deliverable: snx.sbt.Deliverable.type = snx.sbt.Deliverable
+
+  type Linkage = snx.sbt.Linkage
+  val Linkage: snx.sbt.Linkage.type = snx.sbt.Linkage
 
   type NativeDependency = snx.sbt.NativeDependency
   val NativeDependency: snx.sbt.NativeDependency.type = snx.sbt.NativeDependency
 
-  type NativeOptions = snx.sbt.NativeOptions
-  val NativeOptions: snx.sbt.NativeOptions.type = snx.sbt.NativeOptions
+  val NativeClassifier: snx.sbt.NativeClassifier.type = snx.sbt.NativeClassifier
 
-  type NativeSource = snx.sbt.NativeSource
-  val NativeSource: snx.sbt.NativeSource.type = snx.sbt.NativeSource
-
-  type NativeBackend = snx.sbt.NativeBackend
-  val NativeBackend: snx.sbt.NativeBackend.type = snx.sbt.NativeBackend
-
-  type NativeArtefacts = snx.sbt.NativeArtefacts
-  val NativeArtefacts: snx.sbt.NativeArtefacts.type = snx.sbt.NativeArtefacts
+  export Deliverable.{NIR, Library, Executable}
+  export Linkage.{Static, Dynamic}
+  export NativeRuntime.{Linux, Darwin, Windows}
+  export ABI.{Glibc, Musl, Msvc, MinGw}
 
   type NativeConfig = scala.scalanative.build.NativeConfig
   val NativeConfig: scala.scalanative.build.NativeConfig.type = scala.scalanative.build.NativeConfig
-
-  type LTO = scala.scalanative.build.LTO
-  val LTO: scala.scalanative.build.LTO.type = scala.scalanative.build.LTO
 
   type Mode = scala.scalanative.build.Mode
   val Mode: scala.scalanative.build.Mode.type = scala.scalanative.build.Mode
@@ -82,99 +84,141 @@ object SNXImports:
   type GC = scala.scalanative.build.GC
   val GC: scala.scalanative.build.GC.type = scala.scalanative.build.GC
 
-  type BuildTarget = scala.scalanative.build.BuildTarget
-  val BuildTarget: scala.scalanative.build.BuildTarget.type = scala.scalanative.build.BuildTarget
+  type LTO = scala.scalanative.build.LTO
+  val LTO: scala.scalanative.build.LTO.type = scala.scalanative.build.LTO
 
   type Sanitizer = scala.scalanative.build.Sanitizer
   val Sanitizer: scala.scalanative.build.Sanitizer.type = scala.scalanative.build.Sanitizer
 
-  /** A per-platform `nativeConfig` transform; unmatched platforms contribute none. Element type of [[SNX.config]]; see
-    * [[nativeTransform]] to type a literal in a `+=`/`++=`.
-    */
-  type NativeTransform = PartialFunction[NativePlatform, NativeConfig => NativeConfig]
+  type JVMMemoryModelCompliance = scala.scalanative.build.JVMMemoryModelCompliance
+  val JVMMemoryModelCompliance: scala.scalanative.build.JVMMemoryModelCompliance.type =
+    scala.scalanative.build.JVMMemoryModelCompliance
 
-  /** Settings, tasks, and the build host of the sbt-native-extras plugin, namespaced to avoid clashing with sbt or
-    * Scala Native keys (for example sbt's own `target`).
+  /** Lift a `ModuleID` into a [[NativeDependency]] (no classifier); the reverse recovers the underlying `ModuleID`.
+    * `% NativeClassifier`, `options`, and the forwarded builders are methods on [[NativeDependency]] - the marker
+    * argument selects this conversion, while a plain `% Test` / `% "config"` resolves through sbt's own path.
+    */
+  given Conversion[ModuleID, NativeDependency] = module => NativeDependency(module, classified = false)
+  given Conversion[NativeDependency, ModuleID] = dependency => dependency.module
+
+  /** Add a Scala Native row driven by sbt-snx to a project matrix, for each Scala version. The sbt-snx counterpart of
+    * the matrix's built-in `nativePlatform`, which enables the official Scala Native plugin; this enables
+    * [[SNXPlugin$ SNXPlugin]] on the standard `native` platform axis instead. `settings` or `configure` add per-row
+    * configuration, exactly as `nativePlatform` accepts them.
+    */
+  extension (matrix: ProjectMatrix)
+    def snxPlatform(scalaVersions: Seq[String]): ProjectMatrix =
+      snxRow(matrix, scalaVersions, Seq.empty, identity)
+    def snxPlatform(scalaVersions: Seq[String], settings: Seq[Def.Setting[?]]): ProjectMatrix =
+      snxRow(matrix, scalaVersions, Seq.empty, _.settings(settings*))
+    def snxPlatform(scalaVersions: Seq[String], axisValues: Seq[VirtualAxis], settings: Seq[Def.Setting[?]]): ProjectMatrix =
+      snxRow(matrix, scalaVersions, axisValues, _.settings(settings*))
+    def snxPlatform(scalaVersions: Seq[String], axisValues: Seq[VirtualAxis], configure: Project => Project): ProjectMatrix =
+      snxRow(matrix, scalaVersions, axisValues, configure)
+
+  private def snxRow(
+    matrix: ProjectMatrix,
+    scalaVersions: Seq[String],
+    axisValues: Seq[VirtualAxis],
+    configure: Project => Project): ProjectMatrix =
+    matrix.customRow(scalaVersions, VirtualAxis.native +: axisValues, (project: Project) => configure(project.enablePlugins(SNXPlugin)))
+
+  /** Settings and tasks of the sbt-snx plugin, namespaced to avoid clashing with sbt or Scala Native keys
+    * (for example sbt's own `target`).
     */
   object SNX:
 
-    /** The build host's [[snx.TargetPlatform TargetPlatform]], from the `os.name` and `os.arch` system properties. */
+    /** The build host's [[TargetPlatform]], from the `os.name` and `os.arch` system properties. */
     lazy val host: TargetPlatform =
       TargetPlatform.parse(sys.props.getOrElse("os.name", "").nn, sys.props.getOrElse("os.arch", "").nn)
 
-    /** The OS/arch target to classify and link for. Defaults to [[host]]. */
+    /** The OS/arch target the native platform resolves for. Defaults to [[host]]. */
     val target: SettingKey[TargetPlatform] =
-      SettingKey[TargetPlatform]("snxTarget", "OS/arch target for classifier injection and per-platform linking (default: host).")
+      SettingKey[TargetPlatform]("snxTarget", "OS/arch target the native platform resolves for (default: host).")
 
-    /** The OS/arch targets this project declares support for; defaults to the active [[target]] alone. The active
-      * [[target]] may lie outside this set (a cross or development build), which is allowed and noted at load.
+    /** The native runtime resolved for [[target]], its ABI taken from the toolchain target triple. */
+    val runtime: TaskKey[NativeRuntime] =
+      TaskKey[NativeRuntime]("snxRuntime", "Resolved native runtime (target OS/arch plus toolchain ABI).")
+
+    /** The kind of artefact to produce; fixes the publish-versus-link fork. Defaults to [[Deliverable.NIR]]. */
+    val deliverable: SettingKey[Deliverable] =
+      SettingKey[Deliverable]("snxDeliverable", "Artefact kind: NIR, Library, or Executable (default: NIR).")
+
+    /** The per-platform link mode for a `Library`/`Executable` deliverable. Defaults to [[Linkage.Dynamic]]. */
+    val linkage: SettingKey[PartialFunction[NativeRuntime, Linkage]] =
+      SettingKey[PartialFunction[NativeRuntime, Linkage]]("snxLinkage", "Per-platform link mode (default: Dynamic).")
+
+    /** Links the Scala Native binary for the enclosing configuration and returns it. */
+    val link: TaskKey[File] =
+      TaskKey[File]("snxLink", "Link the Scala Native binary.")
+
+    /** Override the C compiler; defaults to the toolchain's discovered `clang`. */
+    val clang: SettingKey[Option[File]] =
+      SettingKey[Option[File]]("snxClang", "C compiler override (default: discovered clang).")
+
+    /** Override the C++ compiler; defaults to the toolchain's discovered `clang++`. */
+    val clangPP: SettingKey[Option[File]] =
+      SettingKey[Option[File]]("snxClangPP", "C++ compiler override (default: discovered clang++).")
+
+    /** Header search directories added to the native compile (`-I`). When [[target]] differs from the build host, the
+      * toolchain's host-discovered header directories are dropped, so a cross build is not contaminated by host paths.
       */
-    val targets: SettingKey[Seq[TargetPlatform]] =
-      SettingKey[Seq[TargetPlatform]]("snxTargets", "Declared set of supported OS/arch targets (default: the active SNX.target).")
+    val includeDirs: SettingKey[Seq[File]] =
+      SettingKey[Seq[File]]("snxIncludeDirs", "Header search directories for the native compile (-I).")
 
-    /** The platform resolved for [[target]] plus the toolchain libc/ABI, read from the Scala Native target triple (or
-      * the discovered clang). The match key per-platform settings condition on.
+    /** Library search directories added to the native link (`-L`). When [[target]] differs from the build host, the
+      * toolchain's host-discovered library directories are dropped, so a cross build is not contaminated by host paths.
       */
-    val platform: TaskKey[NativePlatform] =
-      TaskKey[NativePlatform]("snxPlatform", "Resolved native platform (target OS/arch plus toolchain libc/ABI).")
+    val libDirs: SettingKey[Seq[File]] =
+      SettingKey[Seq[File]]("snxLibDirs", "Library search directories for the native link (-L).")
 
-    /** Per-platform native dependencies contributed for [[target]]. */
+    val mode: SettingKey[Mode] =
+      SettingKey[Mode]("snxMode", "Scala Native build mode (default: Scala Native's).")
+
+    val gc: SettingKey[GC] =
+      SettingKey[GC]("snxGc", "Garbage collector (default: Scala Native's).")
+
+    val lto: SettingKey[LTO] =
+      SettingKey[LTO]("snxLto", "Link-time optimisation (default: Scala Native's).")
+
+    val optimize: SettingKey[Boolean] =
+      SettingKey[Boolean]("snxOptimize", "Whether to run the optimiser (default: Scala Native's).")
+
+    val sanitizer: SettingKey[Option[Sanitizer]] =
+      SettingKey[Option[Sanitizer]]("snxSanitizer", "Sanitizer to instrument the build with (default: none).")
+
+    val multithreading: SettingKey[Option[Boolean]] =
+      SettingKey[Option[Boolean]]("snxMultithreading", "Force multithreading on or off (default: Scala Native's auto-detection).")
+
+    /** Per-platform [[Native]] transforms, applied after the scalar settings so a modifier has the final say. */
+    val modifiers: SettingKey[Seq[Modifier[Native]]] =
+      SettingKey[Seq[Modifier[Native]]]("snxModifiers", "Per-platform native configuration transforms.")
+
+    /** The resolved native configuration: the discovered toolchain base, the scalar settings, the link requirements
+      * propagated from [[usage]], [[dependencies]], and the resolved classpath's descriptors, then the matched
+      * [[modifiers]].
+      */
+    val config: TaskKey[Native] =
+      TaskKey[Native]("snxConfig", "Resolved native configuration.")
+
+    /** Managed native dependencies, resolved under the build's OS/arch classifier and folding their per-platform
+      * options into the native configuration. Plain NIR dependencies may stay in `libraryDependencies`.
+      */
     val dependencies: SettingKey[Seq[NativeDependency]] =
-      SettingKey[Seq[NativeDependency]](
-        "snxDependencies",
-        "Per-platform native dependencies (OS/arch classifier + per-platform native options).")
+      SettingKey[Seq[NativeDependency]]("snxDependencies", "Managed native dependencies (classified or option-carrying).")
 
-    /** Project-level per-platform `nativeConfig` transforms applied for the resolved [[platform]]. */
-    val config: SettingKey[Seq[NativeTransform]] =
-      SettingKey[Seq[NativeTransform]]("snxConfig", "Per-platform nativeConfig transforms applied for the resolved platform.")
-
-    /** Native libraries built from source (`Git`/`Local`) or linked from the system, for [[target]]; see
-      * [[NativeSource]]. Built by [[vendoredArtefacts]] and folded into `nativeConfig`.
+    /** The per-platform link requirements this library exports to consumers, published in its descriptor. A consumer
+      * resolving this library folds the requirements for its own runtime into its own link.
       */
-    val vendored: SettingKey[Seq[NativeSource]] =
-      SettingKey[Seq[NativeSource]]("snxVendored", "Native libraries built from source or linked from the system.")
+    val usage: SettingKey[PartialFunction[NativeRuntime, Usage]] =
+      SettingKey[PartialFunction[NativeRuntime, Usage]]("snxUsage", "Per-platform link requirements exported to consumers.")
 
-    /** The built [[vendored]] libraries - archives to link and include directories to expose - for the resolved
-      * [[platform]].
+    /** Whether to publish the native artefact under its OS/arch classifier, for a per-platform NIR library. Defaults
+      * to `false` - a single, platform-independent jar.
       */
-    val vendoredArtefacts: TaskKey[Seq[NativeArtefacts]] =
-      TaskKey[Seq[NativeArtefacts]](
-        "snxVendoredArtefacts",
-        "Builds the vendored native libraries; yields their archives and include directories.")
-
-    /** Configuration namespace for sbt-native-extras. */
-    val Native: Configuration = sbt.config("native")
-
-    /** Settings that work around sbt/sbt#9117, where the Ivy (and so signed) publish backend drops the Scala Native
-      * platform suffix from published artifact filenames - which Maven rejects. Apply to a project that publishes
-      * platform-suffixed native artifacts: `.settings(SNX.platformPublishSettings)`. Remove once sbt/sbt#9293 ships.
-      */
-    def platformPublishSettings: Seq[Setting[?]] = Seq(
-      moduleName := CrossVersion(ScalaNativeCrossVersion.binary, scalaVersion.value, scalaBinaryVersion.value)
-        .fold(moduleName.value)(_(moduleName.value)),
-      projectID / crossVersion := Disabled()
-    )
+    val classified: SettingKey[Boolean] =
+      SettingKey[Boolean]("snxClassified", "Publish under the OS/arch classifier (per-platform NIR; default: false).")
 
   end SNX
-
-  /** Lifts a `ModuleID` into a [[NativeDependency]]. */
-  given Conversion[ModuleID, NativeDependency] = NativeDependency(_)
-
-  extension (module: ModuleID)
-
-    /** Lift `module` into a classified [[NativeDependency]]. */
-    def native: NativeDependency = NativeDependency(module)
-
-    /** Lift `module` and attach the per-platform additive [[NativeOptions]]. */
-    infix def options(bundle: PartialFunction[NativePlatform, NativeOptions]): NativeDependency =
-      NativeDependency(module).options(bundle)
-
-    /** Lift `module` as an unclassified (plain NIR) [[NativeDependency]]. */
-    def plain: NativeDependency = NativeDependency(module).plain
-
-  /** Type a [[NativeTransform]] literal so it infers in a `SNX.config +=`/`++=` (sbt's `Append` does not propagate the
-    * element type to a partial-function literal). A `SNX.config :=` propagates it and needs no wrapper.
-    */
-  def nativeTransform(transform: NativeTransform): NativeTransform = transform
 
 end SNXImports

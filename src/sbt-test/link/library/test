@@ -1,0 +1,2 @@
+# The Library deliverable links a native library; a C driver links against it and calls an @exported symbol.
+> testC

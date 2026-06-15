@@ -102,6 +102,9 @@ jobs:
           # MSVC-targeting system clang entirely. vcvarsall is intentionally NOT run for this cell.
           C:\msys64\usr\bin\pacman -S --needed --noconfirm mingw-w64-clang-x86_64-toolchain
           "LLVM_BIN=C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: "[${{ matrix.classifier }}${{ matrix.env && format(' ({0})', matrix.env) || '' }}]: Unit tests"
+        shell: bash
+        run: ./project/scripts/run-sbt.sh -batch "test"
       - name: "[${{ matrix.classifier }}${{ matrix.env && format(' ({0})', matrix.env) || '' }}]: Scripted tests"
         shell: bash
         run: ./project/scripts/run-sbt.sh -batch "scripted"

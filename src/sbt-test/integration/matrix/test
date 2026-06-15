@@ -1,0 +1,8 @@
+# the matrix expands into a JVM row (app) and an sbt-snx native row (appNative)
+# the JVM row compiles as a plain JVM project (its scalajvm/Platform.scala on the path)
+> app/compile
+# the native row compiles its scalanative/Platform.scala AND links a native binary through sbt-snx (snxLink is an
+# sbt-snx-only task, so its success proves SNXPlugin drives the native row inside the matrix)
+> appNative/Compile/snxLink
+# and the linked native binary runs
+> appNative/run

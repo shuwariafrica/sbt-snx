@@ -1,5 +1,0 @@
-# Fully-static-link a binary against a vendored static archive on environments that support it (musl, MSVC, MinGW);
-# filtered off glibc/osx by the build's scripted/excludeFilter. SNX.target is the host - the cell's own environment -
-# so the static link targets whatever platform runs the test. The link itself fails the test if static linking breaks.
-> check
-> Compile/nativeLink

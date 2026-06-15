@@ -20,24 +20,26 @@ package snx
 /** Operating-system axis of a native [[TargetPlatform]], carrying the classifier token it renders to. See [[OS$ OS]] to
   * parse an identifier.
   */
-enum OS(val token: String):
+enum OS(val token: String) derives CanEqual:
   case Linux extends OS("linux")
-  case Osx extends OS("osx")
+  case Darwin extends OS("osx")
   case Windows extends OS("windows")
 
 /** Parser for [[OS]]. */
 object OS:
 
-  given CanEqual[OS, OS] = CanEqual.derived
+  // Singleton operating-system types indexing ABI, so ABI[OS.Linux] names only the Linux ABIs.
+  type Linux = OS.Linux.type
+  type Windows = OS.Windows.type
 
   /** Parse a host `os.name` or a Scala Native target-triple operating-system component into a supported [[OS]].
     *
     * @throws UnsupportedTargetException
-    *   if `value` is not [[Linux]], [[Osx]], or [[Windows]].
+    *   if `value` is not [[Linux]], [[Darwin]], or [[Windows]].
     */
   def parse(value: String): OS =
     val n = normalise(value)
     if n.startsWith("linux") then Linux
-    else if n.startsWith("mac") || n.startsWith("osx") || n.startsWith("darwin") then Osx
+    else if n.startsWith("mac") || n.startsWith("osx") || n.startsWith("darwin") then Darwin
     else if n.startsWith("windows") then Windows
     else throw UnsupportedTargetException(s"Unsupported operating system: '$value'") // scalafix:ok DisableSyntax.throw

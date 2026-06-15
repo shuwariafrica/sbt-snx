@@ -21,8 +21,8 @@ class PlatformSuite extends munit.FunSuite:
 
   test("OS.parse recognises supported operating systems"):
     assertEquals(OS.parse("Linux"), OS.Linux)
-    assertEquals(OS.parse("Mac OS X"), OS.Osx)
-    assertEquals(OS.parse("darwin"), OS.Osx)
+    assertEquals(OS.parse("Mac OS X"), OS.Darwin)
+    assertEquals(OS.parse("darwin"), OS.Darwin)
     assertEquals(OS.parse("Windows 11"), OS.Windows)
 
   test("OS.parse rejects an unsupported operating system"):
@@ -38,31 +38,49 @@ class PlatformSuite extends munit.FunSuite:
     intercept[UnsupportedTargetException](Arch.parse("riscv64"))
 
   test("TargetPlatform.classifier renders os-arch with the os-maven tokens"):
-    assertEquals(TargetPlatform(OS.Osx, Arch.Aarch64).classifier, "osx-aarch_64")
+    assertEquals(TargetPlatform(OS.Darwin, Arch.Aarch64).classifier, "osx-aarch_64")
     assertEquals(TargetPlatform(OS.Linux, Arch.X86_64).classifier, "linux-x86_64")
 
-  test("NativePlatform.parse takes the libc/ABI from a four-component triple"):
+  test("NativeRuntime.parse takes the ABI from a four-component triple"):
     assertEquals(
-      NativePlatform.parse(TargetPlatform(OS.Linux, Arch.X86_64), "x86_64-unknown-linux-gnu"),
-      NativePlatform.Linux(Arch.X86_64, LinuxLibc.Glibc))
+      NativeRuntime.parse(TargetPlatform(OS.Linux, Arch.X86_64), "x86_64-unknown-linux-gnu"),
+      NativeRuntime.Linux(Arch.X86_64, ABI.Glibc))
     assertEquals(
-      NativePlatform.parse(TargetPlatform(OS.Linux, Arch.X86_64), "x86_64-unknown-linux-musl"),
-      NativePlatform.Linux(Arch.X86_64, LinuxLibc.Musl))
+      NativeRuntime.parse(TargetPlatform(OS.Linux, Arch.X86_64), "x86_64-unknown-linux-musl"),
+      NativeRuntime.Linux(Arch.X86_64, ABI.Musl))
     assertEquals(
-      NativePlatform.parse(TargetPlatform(OS.Windows, Arch.X86_64), "x86_64-pc-windows-msvc"),
-      NativePlatform.Windows(Arch.X86_64, WindowsABI.MSVC))
+      NativeRuntime.parse(TargetPlatform(OS.Windows, Arch.X86_64), "x86_64-pc-windows-msvc"),
+      NativeRuntime.Windows(Arch.X86_64, ABI.Msvc))
     assertEquals(
-      NativePlatform.parse(TargetPlatform(OS.Windows, Arch.X86_64), "x86_64-w64-windows-gnu"),
-      NativePlatform.Windows(Arch.X86_64, WindowsABI.MinGW))
+      NativeRuntime.parse(TargetPlatform(OS.Windows, Arch.X86_64), "x86_64-w64-windows-gnu"),
+      NativeRuntime.Windows(Arch.X86_64, ABI.MinGw))
 
-  test("NativePlatform.parse falls back to the third triple component"):
+  test("NativeRuntime.parse falls back to the third triple component"):
     assertEquals(
-      NativePlatform.parse(TargetPlatform(OS.Linux, Arch.Aarch64), "aarch64-linux-musl"),
-      NativePlatform.Linux(Arch.Aarch64, LinuxLibc.Musl))
+      NativeRuntime.parse(TargetPlatform(OS.Linux, Arch.Aarch64), "aarch64-linux-musl"),
+      NativeRuntime.Linux(Arch.Aarch64, ABI.Musl))
 
-  test("NativePlatform.parse ignores libc on macOS"):
-    assertEquals(NativePlatform.parse(TargetPlatform(OS.Osx, Arch.Aarch64), "arm64-apple-darwin"), NativePlatform.Osx(Arch.Aarch64))
+  test("NativeRuntime.parse ignores the triple environment on macOS"):
+    assertEquals(NativeRuntime.parse(TargetPlatform(OS.Darwin, Arch.Aarch64), "arm64-apple-darwin"), NativeRuntime.Darwin(Arch.Aarch64))
 
-  test("NativePlatform.parse rejects a triple with no recognised libc"):
-    intercept[UnsupportedTargetException](NativePlatform.parse(TargetPlatform(OS.Linux, Arch.X86_64), "x86_64-unknown-linux-android"))
+  test("NativeRuntime.parse rejects a triple with no recognised ABI"):
+    intercept[UnsupportedTargetException](NativeRuntime.parse(TargetPlatform(OS.Linux, Arch.X86_64), "x86_64-unknown-linux-android"))
+
+  test("ABI carries its environment token"):
+    assertEquals(ABI.Glibc.token, "gnu")
+    assertEquals(ABI.Musl.token, "musl")
+    assertEquals(ABI.Msvc.token, "msvc")
+    assertEquals(ABI.MinGw.token, "mingw")
+
+  test("NativeRuntime.pattern renders the descriptor key, with the environment where it applies"):
+    assertEquals(NativeRuntime.Linux(Arch.X86_64, ABI.Glibc).pattern, "linux-x86_64-gnu")
+    assertEquals(NativeRuntime.Windows(Arch.X86_64, ABI.Msvc).pattern, "windows-x86_64-msvc")
+    assertEquals(NativeRuntime.Darwin(Arch.Aarch64).pattern, "osx-aarch_64")
+
+  test("NativeRuntime.variants enumerates each ABI of a target's operating system"):
+    assertEquals(
+      NativeRuntime.variants(TargetPlatform(OS.Linux, Arch.X86_64)),
+      Seq(NativeRuntime.Linux(Arch.X86_64, ABI.Glibc), NativeRuntime.Linux(Arch.X86_64, ABI.Musl))
+    )
+    assertEquals(NativeRuntime.variants(TargetPlatform(OS.Darwin, Arch.Aarch64)), Seq(NativeRuntime.Darwin(Arch.Aarch64)))
 end PlatformSuite

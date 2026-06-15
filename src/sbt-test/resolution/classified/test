@@ -1,0 +1,14 @@
+# ivy backend - pinned explicitly (not relying on sbt's default), so a future default flip cannot make this vacuous
+> set useIvy := true
+> publish
+# the split: manifest-only placeholder main + classified content (native.json + NIR) at the suffixed, classified path
+> checkIvy
+# build-twice no-cascade: repackage and regenerate the descriptor after a reload; both are byte-stable (no publish cascade)
+> recordStable
+> reload
+> checkStable
+# ivyless (coursier) backend: the same split, platform suffix, and classifier - guarding a one-backend sbt#9117 regression
+> set useIvy := false
+> set publishTo := Some(MavenCache("snx-coursier", coursierRepo.value))
+> publish
+> checkCoursier

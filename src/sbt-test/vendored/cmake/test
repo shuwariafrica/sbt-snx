@@ -1,4 +1,0 @@
-# A local CMake static lib builds and installs; its archive plus include dir reach nativeConfig (check), and
-# the native binary links against the built symbol through a glue .c that includes the vendored header.
-> check
-> Compile/nativeLink
