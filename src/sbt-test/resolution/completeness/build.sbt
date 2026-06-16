@@ -14,7 +14,7 @@ val vendor = project.enablePlugins(SNXPlugin)
 val producer = project
   .enablePlugins(SNXPlugin)
   .settings(
-    SNX.dependencies += "snx.test" %% "vendor" % "0.1.0" % Runtime options { case _ => Usage.libraries("snx_vendor_absent") }
+    SNX.dependencies += ("snx.test" %% "vendor" % "0.1.0" % Runtime).options { case _ => Usage.libraries("snx_vendor_absent") }
   )
 
 val consumer = project
@@ -28,7 +28,7 @@ val local = project
   .enablePlugins(SNXPlugin)
   .settings(
     SNX.deliverable := Executable,
-    SNX.dependencies += "snx.test" %% "vendor" % "0.1.0" options { case _ => Usage.libraries("snx_local_absent") }
+    SNX.dependencies += ("snx.test" %% "vendor" % "0.1.0").options { case _ => Usage.libraries("snx_local_absent") }
   )
 
 val checkPatch = taskKey[Unit]("assert the runtime-scoped per-dependency patch propagated into the producer descriptor")

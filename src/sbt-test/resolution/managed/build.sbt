@@ -12,7 +12,7 @@ SNX.dependencies ++= Seq(
   "org.example" %% "lib" % "1.0" % NativeClassifier,
   "org.example" %% "lib" % "1.0" % NativeClassifier % Test,
   "org.example" %% "lib" % "1.0" % Test % NativeClassifier,
-  "org.example" %% "lib" % "1.0" % NativeClassifier options { case _ => Usage.libraries("z") }
+  ("org.example" %% "lib" % "1.0" % NativeClassifier).options { case _ => Usage.libraries("z") }
 )
 
 // The bare lift: a plain ModuleID where a NativeDependency is expected.
