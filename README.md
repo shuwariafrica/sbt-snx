@@ -94,7 +94,8 @@ SNX.vendored += Vendored
   .options { case Linux(_, _) => _.library("m") }
 ```
 
-`local(directory)` builds a directory under the project (resolved against the project, then the build root). `cmake`
+`local(directory)` builds a directory under the project (resolved against the project, then the build root);
+`git(uri, ref)` clones a Git repository at a pinned ref (a tag, commit, or branch). `cmake`
 configures, builds, installs, and collects the static archives and headers, forcing static libraries
 (`-DBUILD_SHARED_LIBS=OFF`); per-platform configure flags pass as `cmake(targets, flags)`. `options` adds the
 per-platform link requirements the consuming link needs but a static archive cannot carry itself - distinct from the

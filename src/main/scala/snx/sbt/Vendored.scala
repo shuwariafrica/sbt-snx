@@ -51,6 +51,11 @@ object Vendored:
   /** Built from a local `directory`, resolved against the project base directory, then the build root. */
   def local(directory: String): Origin = Origin.Local(directory)
 
+  /** Built from a Git repository `uri` cloned at `ref` (a tag, commit, or branch), pinned and cached. A branch is
+    * cloned once and then frozen, so pin a tag or commit for a reproducible build.
+    */
+  def git(uri: String, ref: String): Origin = Origin.Git(uri, ref)
+
   /** A stable content identity for a source directory: each file's path (relative to the directory) and content
     * hash, sorted - so a cache key tracks edits to the sources but not file timestamps or ordering.
     */
@@ -86,3 +91,4 @@ end Origin
 /** Variants of [[Origin]]. */
 object Origin:
   final private[sbt] case class Local(directory: String) extends Origin
+  final private[sbt] case class Git(uri: String, ref: String) extends Origin

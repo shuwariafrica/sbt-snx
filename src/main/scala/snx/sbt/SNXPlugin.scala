@@ -540,6 +540,18 @@ object SNXPlugin extends AutoPlugin:
           cache,
           converter,
           log)
+      case Origin.Git(uri, ref) =>
+        val clones = new File(staging, "clones")
+        cachedBuild(
+          slug(s"$uri-$ref"),
+          library.backend,
+          runtime,
+          s"git:$uri@$ref",
+          () => fetch(uri, ref, clones),
+          staging,
+          cache,
+          converter,
+          log)
 
   /** Build `backend` for `runtime`, cached per library in the local action cache. `locate` resolves the source
     * directory and runs on a cache miss only; `sourceId` keys the cache to the source identity, and
@@ -583,6 +595,17 @@ object SNXPlugin extends AutoPlugin:
   private def resolveDir(directory: String, projectBase: File, rootBase: File): File =
     val inProject = new File(projectBase, directory)
     if inProject.isDirectory then inProject else new File(rootBase, directory)
+
+  /** Clone `uri` at `ref` (a tag, commit, or branch) into a cached subdirectory of `clones`, reusing an existing
+    * clone - so the clone runs only on a cache miss, and a branch is cloned once and then frozen per machine.
+    */
+  private def fetch(uri: String, ref: String, clones: File): File =
+    val keyed = new java.net.URI(s"$uri#$ref")
+    val localCopy = Resolvers.uniqueSubdirectoryFor(keyed, clones)
+    Resolvers.creates(localCopy) {
+      Resolvers.run("git", "clone", uri, localCopy.getAbsolutePath)
+      Resolvers.run(Some(localCopy), "git", "checkout", "-q", ref)
+    }
 
   /** A filesystem-safe staging label for a vendored origin. */
   private def slug(value: String): String = value.replaceAll("[^A-Za-z0-9]+", "-").nn
