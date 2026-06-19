@@ -1,0 +1,16 @@
+# A cold resolve runs cmake (build dir appears). After dropping the build dir and reloading (which clears sbt's
+# in-session state; the action cache persists on disk), re-resolving the config is a cache hit - cmake does not
+# rerun, so the build dir is not recreated.
+> Compile/snxConfig
+> assertBuilt
+> removeBuild
+> reload
+> Compile/snxConfig
+> assertCached
+
+# Editing a vendored source changes its content hash, so the cache key changes and the next resolve is a miss -
+# cmake reruns and the build dir reappears.
+$ copy-file changes/answer.c vendor/answer/answer.c
+> reload
+> Compile/snxConfig
+> assertBuilt

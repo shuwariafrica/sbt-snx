@@ -29,6 +29,7 @@ Compile / sourceGenerators += Def.task {
        |
        |private[sbt] object BuildInfo:
        |  inline val nativeVersion = "${Dependencies.`scala-native-tools`.revision}"
+       |  inline val version = "${version.value}"
        |""".stripMargin
   )
   Seq(file)

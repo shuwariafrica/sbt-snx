@@ -1,0 +1,5 @@
+# A local CMake library (vendor/answer) builds, installs, and folds into the native link. The link succeeds only if
+# the built libanswer.a reaches the link, the vendored -Iinclude reaches the C compile (glue.c #includes answer.h),
+# and the per-platform compile/c options reach it (glue.c #errors without them). The binary then runs and verifies
+# the answer end to end.
+> run

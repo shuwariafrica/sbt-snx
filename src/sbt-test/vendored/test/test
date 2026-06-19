@@ -1,0 +1,5 @@
+# A NIR library (default deliverable) folds a vendored CMake library into its TEST link only (Test / SNX.vendored).
+# The munit test links the test binary - including the test-scoped glue.c (#includes the vendored header, carries
+# the per-platform defines) and the built libanswer.a - then runs and verifies the answer. Proves the Test-scope
+# fold and that a NIR library can vendor C for its own test link.
+> test

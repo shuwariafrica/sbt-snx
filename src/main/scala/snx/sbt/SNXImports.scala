@@ -68,6 +68,9 @@ object SNXImports:
   type NativeDependency = snx.sbt.NativeDependency
   val NativeDependency: snx.sbt.NativeDependency.type = snx.sbt.NativeDependency
 
+  type Vendored = snx.sbt.Vendored
+  val Vendored: snx.sbt.Vendored.type = snx.sbt.Vendored
+
   val NativeClassifier: snx.sbt.NativeClassifier.type = snx.sbt.NativeClassifier
 
   export Deliverable.{NIR, Library, Executable}
@@ -206,6 +209,13 @@ object SNXImports:
       */
     val dependencies: SettingKey[Seq[NativeDependency]] =
       SettingKey[Seq[NativeDependency]]("snxDependencies", "Managed native dependencies (classified or option-carrying).")
+
+    /** Native libraries built from source and folded into this configuration's link - `Compile` into the main link,
+      * `Test` into the test link. Config-scoped and purely local: never published and never in the descriptor, so for
+      * a NIR library (which ships its C as source) vendored C belongs only in a `Test` link.
+      */
+    val vendored: SettingKey[Seq[Vendored]] =
+      SettingKey[Seq[Vendored]]("snxVendored", "Native libraries built from source and folded into the link.")
 
     /** The per-platform link requirements this library exports to consumers, published in its descriptor. A consumer
       * resolving this library folds the requirements for its own runtime into its own link.

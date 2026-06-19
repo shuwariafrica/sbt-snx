@@ -60,7 +60,13 @@ import sbt.librarymanagement.InclExclRule
 import sbt.librarymanagement.ModuleID
 import sbt.librarymanagement.Platform
 import sbt.plugins.JvmPlugin
+import sbt.util.ActionCache
+import sbt.util.BuildWideCacheConfiguration
+import sbt.util.CacheLevelTag
+import sbt.util.Digest
+import sbt.util.Logger
 import sjsonnew.BasicJsonProtocol.given
+import xsbti.FileConverter
 import xsbti.HashedVirtualFileRef
 
 import java.io.File
@@ -140,6 +146,7 @@ object SNXPlugin extends AutoPlugin:
       SNX.multithreading := None,
       SNX.modifiers := Seq.empty,
       SNX.dependencies := Seq.empty,
+      SNX.vendored := Seq.empty,
       SNX.usage := PartialFunction.empty,
       SNX.classified := false,
       libraryDependencies ++= SNX.dependencies.value.map(dependency => derive(SNX.target.value, dependency)),
@@ -218,7 +225,19 @@ object SNXPlugin extends AutoPlugin:
       val files = classpath.map(entry => fileConverter.value.toPath(entry.data).toFile.nn)
       val requirements = (own ++ Descriptor.fold(classpathDescriptors(files), runtime)).distinct
       val rendered = Contribution.merge(base, Usage.render(requirements, runtime))
-      val propagated = enforceMultithreading(rendered, requirements.requiresMultithreading, SNX.multithreading.value)
+      val staging = new File(target.value, s"snx/vendored/${if testConfig then "test" else "main"}")
+      val withVendored = foldVendored(
+        rendered,
+        SNX.vendored.value,
+        runtime,
+        baseDirectory.value,
+        (LocalRootProject / baseDirectory).value,
+        staging,
+        Def.cacheConfiguration.value,
+        fileConverter.value,
+        streams.value.log
+      )
+      val propagated = enforceMultithreading(withVendored, requirements.requiresMultithreading, SNX.multithreading.value)
       SNX.modifiers.value.foldLeft(Native(propagated))((native, modifier) => modifier.lift(runtime).fold(native)(_(native)))
     }
   )
@@ -473,6 +492,111 @@ object SNXPlugin extends AutoPlugin:
       setting match
         case Some(false) => fail("a native dependency requires multithreading, which this project has disabled")
         case _           => config.withMultithreading(Some(true))
+
+  /** Build each declared vendored library for `runtime` and fold its result onto `base`: the static archives as raw
+    * link inputs, the header directories as `-I`, and the library's own per-platform [[Contribution]] merged onto the
+    * channels. Applied after the propagated requirements and before the modifiers, so a modifier keeps the final say.
+    */
+  private def foldVendored(
+    base: NativeConfig,
+    libraries: Seq[Vendored],
+    runtime: NativeRuntime,
+    projectBase: File,
+    rootBase: File,
+    staging: File,
+    cache: BuildWideCacheConfiguration,
+    converter: FileConverter,
+    log: Logger): NativeConfig =
+    libraries.foldLeft(base) { (config, library) =>
+      val artefacts = buildVendored(library, runtime, projectBase, rootBase, staging, cache, converter, log)
+      val withArtefacts = config
+        .withLinkingOptions(config.linkingOptions ++ artefacts.archives.map(_.getAbsolutePath.nn))
+        .withCompileOptions(config.compileOptions ++ artefacts.includes.map(dir => s"-I${dir.getAbsolutePath}"))
+      Contribution.merge(withArtefacts, library.contributionFor(runtime))
+    }
+
+  /** Build one declared vendored library for `runtime`. A `Local` origin resolves its directory (the project base,
+    * then the build root) and keys the cache to a content hash of the sources.
+    */
+  private def buildVendored(
+    library: Vendored,
+    runtime: NativeRuntime,
+    projectBase: File,
+    rootBase: File,
+    staging: File,
+    cache: BuildWideCacheConfiguration,
+    converter: FileConverter,
+    log: Logger): Artefacts =
+    library.origin match
+      case Origin.Local(directory) =>
+        val location = resolveDir(directory, projectBase, rootBase)
+        cachedBuild(
+          slug(directory),
+          library.backend,
+          runtime,
+          Vendored.contentDigest(location),
+          () => location,
+          staging,
+          cache,
+          converter,
+          log)
+
+  /** Build `backend` for `runtime`, cached per library in the local action cache. `locate` resolves the source
+    * directory and runs on a cache miss only; `sourceId` keys the cache to the source identity, and
+    * `backend.cacheKey` adds the build configuration. A compiled archive is not portable, so the cache is
+    * [[CacheLevelTag.Local]] - the [[toolchainId]] in the key invalidates it across a toolchain upgrade.
+    */
+  private def cachedBuild(
+    name: String,
+    backend: Backend,
+    runtime: NativeRuntime,
+    sourceId: String,
+    locate: () => File,
+    staging: File,
+    cache: BuildWideCacheConfiguration,
+    converter: FileConverter,
+    log: Logger): Artefacts =
+    val sourceStaging = new File(staging, name)
+    val outputDir = cache.outputDirectory
+    val key = List(BuildInfo.version, runtime.toString, toolchainId, sourceId) ++ backend.cacheKey(runtime)
+    val (archives, includes) = ActionCache.cache[Seq[String], (Seq[String], Seq[String])](
+      key,
+      Digest.zero,
+      Digest.zero,
+      List(CacheLevelTag.Local),
+      cache
+    ) { _ =>
+      val location = locate()
+      IO.delete(sourceStaging)
+      val built = backend.build(BuildContext(location, sourceStaging, runtime, log))
+      val outputs =
+        built.archives.map(file => converter.toVirtualFile(file.toPath.nn)) ++
+          built.includes.map(dir => ActionCache.packageDirectory(converter.toVirtualFile(dir.toPath.nn), converter, outputDir))
+      def relative(files: Seq[File]): Seq[String] = files.map(file => outputDir.relativize(file.toPath).toString)
+      ActionCache.InternalActionResult((relative(built.archives), relative(built.includes)), outputs)
+    }
+    def absolute(paths: Seq[String]): Seq[File] = paths.map(path => outputDir.resolve(path).nn.toFile.nn)
+    Artefacts(absolute(archives), absolute(includes))
+  end cachedBuild
+
+  /** Resolve a `Local` vendored directory: relative to the project base if it exists there, else to the build root. */
+  private def resolveDir(directory: String, projectBase: File, rootBase: File): File =
+    val inProject = new File(projectBase, directory)
+    if inProject.isDirectory then inProject else new File(rootBase, directory)
+
+  /** A filesystem-safe staging label for a vendored origin. */
+  private def slug(value: String): String = value.replaceAll("[^A-Za-z0-9]+", "-").nn
+
+  /** A best-effort local toolchain identity for the cache key: the `clang` and `cmake` versions, so an upgrade of
+    * either rebuilds rather than reusing an archive compiled against a different one.
+    */
+  private def toolchainId: String =
+    def version(tool: String): String =
+      scala.util
+        .Try(scala.sys.process.Process(Seq(tool, "--version")).!!.linesIterator.find(_.nonEmpty).getOrElse(""))
+        .toOption
+        .getOrElse("")
+    s"clang=${version("clang")};cmake=${version("cmake")}"
 
   // Configurations whose dependencies are visible in each scope, along the Test -> Runtime -> Compile extension chain:
   // Compile sees compile-scoped; Runtime adds runtime-scoped; Test adds test-scoped.

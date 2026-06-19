@@ -8,8 +8,9 @@ and tasks.
 
 > **Most Scala Native projects do not need this plugin.** Use the official, battle-tested
 > [sbt-scala-native](https://scala-native.org) plugin unless you need per-OS/arch classified resolution and publishing,
-> or automatic propagation of native link requirements (system libraries, frameworks, etc) across the dependency graph,
-> or direct per-platform control of the native build configuration.
+> automatic propagation of native link requirements (system libraries, frameworks, etc) across the dependency graph,
+> direct per-platform control of the native build configuration, or C/C++ libraries built from source and linked into
+> the native build.
 
 ## Getting started
 
@@ -76,6 +77,30 @@ SNX.dependencies += "org.acme" %% "blas" % "0.9" % NativeClassifier options {
 
 These requirements fold into this project's own link and propagate into its published descriptor, so they reach
 downstream consumers too.
+
+## Source-built C libraries
+
+`SNX.vendored` builds a C/C++ library from source and folds it into the native link - the source-built counterpart to
+the managed `SNX.dependencies`. It is local to the build and never published: the built archive folds into a link
+directly and never travels in a descriptor (a library that ships C publishes that C as source). It is config-scoped, so
+a `Test / SNX.vendored` library is built only for the test link.
+
+A library is declared from an origin and a build backend, with optional per-platform link contributions:
+
+```scala
+SNX.vendored += Vendored
+  .local("vendor/mylib")
+  .cmake("mylib")
+  .options { case Linux(_, _) => _.library("m") }
+```
+
+`local(directory)` builds a directory under the project (resolved against the project, then the build root). `cmake`
+configures, builds, installs, and collects the static archives and headers, forcing static libraries
+(`-DBUILD_SHARED_LIBS=OFF`); per-platform configure flags pass as `cmake(targets, flags)`. `options` adds the
+per-platform link requirements the consuming link needs but a static archive cannot carry itself - distinct from the
+CMake configure `flags`. The build runs in a normal toolchain environment, so a CMakeLists using `find_package` or a
+toolchain file behaves as it does standalone (pass any extra `-D...` through the configure flags). Builds are cached
+locally and rerun only when the sources, configuration, or toolchain change.
 
 ## Exported requirements and propagation
 
