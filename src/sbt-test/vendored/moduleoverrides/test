@@ -1,0 +1,4 @@
+# A local CMake library whose CMakeLists include(AnswerModule) resolves only via the moduleOverrides directory the
+# plugin prepends to CMAKE_MODULE_PATH (the 3-arg cmake overload). The module sets ANSWER_VALUE, compile-defined into
+# answer.c; a successful build and a run printing 42 prove moduleOverrides reached cmake configure.
+> run
