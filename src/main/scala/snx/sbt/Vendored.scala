@@ -88,6 +88,15 @@ sealed trait Origin derives CanEqual:
     */
   def cmake(targets: Seq[String], flags: PartialFunction[NativeRuntime, Seq[String]], moduleOverrides: File): Vendored =
     new Vendored(this, Backend.CMake(flags, targets, Some(moduleOverrides)), PartialFunction.empty)
+
+  /** Build with a user-supplied `build` function: it produces the [[Artefacts]] from the [[BuildContext]], writing the
+    * archives and header directories under the context's staging directory so they can be cached. `token` keys the
+    * cache (the function cannot be hashed, so change `token` when the build logic changes). The escape hatch for Make,
+    * Autotools, or any toolchain the [[cmake]] backend does not cover; unlike `cmake`, it runs on any toolchain, MinGW
+    * included.
+    */
+  def command(token: String)(build: BuildContext => Artefacts): Vendored =
+    new Vendored(this, Backend.Command(token, build), PartialFunction.empty)
 end Origin
 
 /** Variants of [[Origin]]. */

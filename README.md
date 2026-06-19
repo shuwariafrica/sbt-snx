@@ -107,6 +107,11 @@ The CMake backend builds with CMake's default toolchain, which matches the Scala
 MSVC Windows toolchain. It is not supported on Windows MinGW - MSVC is the supported Windows toolchain - so a vendored
 CMake library there fails the build with a clear error rather than producing an unlinkable archive.
 
+For a build CMake does not cover - Make, Autotools, a hand-rolled script - `command(token) { ctx => ... }` is the
+escape hatch: the function builds from `ctx.source` into `ctx.staging` and returns the archives and header directories
+to fold in (an `Artefacts`, whose paths must lie under `ctx.staging` so they are cached); `token` keys the build cache.
+Because the build is yours to drive, `command` works on any toolchain - MinGW included.
+
 ## Exported requirements and propagation
 
 A native library that bundles C may require its consumers to link extra system libraries, frameworks, or whole

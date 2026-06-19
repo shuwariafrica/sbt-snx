@@ -117,6 +117,13 @@ private[sbt] object Backend:
       Seq("cmake", targets.mkString(",")) ++ flags.applyOrElse(runtime, (_: NativeRuntime) => Nil) ++ overridesKey
   end CMake
 
+  /** A user-supplied build: `action` produces the [[Artefacts]] from the [[BuildContext]]; `token` keys the cache, as
+    * the function itself cannot be hashed.
+    */
+  final case class Command(token: String, action: BuildContext => Artefacts) extends Backend:
+    def build(context: BuildContext): Artefacts = action(context)
+    def cacheKey(runtime: NativeRuntime): Seq[String] = Seq("command", token)
+
   private def isArchive(fileName: String): Boolean = fileName.endsWith(".a") || fileName.endsWith(".lib")
 
   private def fail(error: SNXError): Nothing = throw error // scalafix:ok DisableSyntax.throw

@@ -583,6 +583,7 @@ object SNXPlugin extends AutoPlugin:
       val location = locate()
       IO.delete(sourceStaging)
       val built = backend.build(BuildContext(location, sourceStaging, runtime, log))
+      requireStaged(built.archives ++ built.includes, sourceStaging)
       val outputs =
         built.archives.map(file => converter.toVirtualFile(file.toPath.nn)) ++
           built.includes.map(dir => ActionCache.packageDirectory(converter.toVirtualFile(dir.toPath.nn), converter, outputDir))
@@ -592,6 +593,17 @@ object SNXPlugin extends AutoPlugin:
     def absolute(paths: Seq[String]): Seq[File] = paths.map(path => outputDir.resolve(path).nn.toFile.nn)
     Artefacts(absolute(archives), absolute(includes))
   end cachedBuild
+
+  /** Verify every vendored output lies under `staging`, so the action cache can relativise and restore it; a backend
+    * that writes elsewhere (a Command returning source-tree paths) fails with a clear error, not an opaque cache one.
+    */
+  private[sbt] def requireStaged(outputs: Seq[File], staging: File): Unit =
+    val root = staging.toPath.nn.toAbsolutePath.nn.normalize.nn
+    outputs.foreach: output =>
+      if !output.toPath.nn.toAbsolutePath.nn.normalize.nn.startsWith(root) then
+        fail(
+          SNXError.OutputOutsideStaging(s"snx: vendored output '${output.getAbsolutePath}' lies outside the build staging directory " +
+            s"'${staging.getAbsolutePath}'; a backend must write its archives and headers under the BuildContext staging directory"))
 
   /** Resolve a `Local` vendored directory: relative to the project base if it exists there, else to the build root. */
   private def resolveDir(directory: String, projectBase: File, rootBase: File): File =

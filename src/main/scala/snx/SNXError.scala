@@ -37,6 +37,11 @@ object SNXError:
     */
   final case class CMakeBuildFailed(message: String) extends SNXError(message)
 
+  /** A vendored backend output (archive or header directory) that lies outside the build staging directory, so the
+    * build cache cannot capture it.
+    */
+  final case class OutputOutsideStaging(message: String) extends SNXError(message)
+
   /** A static executable requested on a toolchain that cannot link one - musl or MSVC is required. */
   final case class StaticLinkingUnsupported(message: String) extends SNXError(message)
 

@@ -71,6 +71,11 @@ object SNXImports:
   type Vendored = snx.sbt.Vendored
   val Vendored: snx.sbt.Vendored.type = snx.sbt.Vendored
 
+  type BuildContext = snx.sbt.BuildContext
+
+  type Artefacts = snx.sbt.Artefacts
+  val Artefacts: snx.sbt.Artefacts.type = snx.sbt.Artefacts
+
   val NativeClassifier: snx.sbt.NativeClassifier.type = snx.sbt.NativeClassifier
 
   export Deliverable.{NIR, Library, Executable}

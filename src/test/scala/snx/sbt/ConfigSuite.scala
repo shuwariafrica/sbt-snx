@@ -60,4 +60,9 @@ class ConfigSuite extends munit.FunSuite:
       SNXPlugin.enforceMultithreading(NativeConfig.empty, required = false, None).multithreading,
       NativeConfig.empty.multithreading)
     intercept[SNXError.MultithreadingRequired](SNXPlugin.enforceMultithreading(NativeConfig.empty, required = true, Some(false)))
+
+  test("requireStaged accepts outputs under the staging directory and rejects those outside it"):
+    val staging = new java.io.File("target/snx-staging-test")
+    SNXPlugin.requireStaged(Seq(new java.io.File(staging, "prefix/lib/libanswer.a")), staging)
+    intercept[SNXError.OutputOutsideStaging](SNXPlugin.requireStaged(Seq(new java.io.File("vendor/answer/include")), staging))
 end ConfigSuite
