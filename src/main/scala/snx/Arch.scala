@@ -29,11 +29,11 @@ object Arch:
 
   /** Parse a host `os.arch` or a Scala Native target-triple architecture component into a supported [[Arch]].
     *
-    * @throws UnsupportedTargetException
+    * @throws SNXError.UnsupportedTarget
     *   if `value` is not [[X86_64]] or [[Aarch64]].
     */
   def parse(value: String): Arch =
     normalise(value) match
       case v if v.matches("^(x8664|amd64|ia32e|em64t|x64)$") => X86_64
       case "aarch64" | "arm64"                               => Aarch64
-      case _ => throw UnsupportedTargetException(s"Unsupported architecture: '$value'") // scalafix:ok DisableSyntax.throw
+      case _ => throw SNXError.UnsupportedTarget(s"Unsupported architecture: '$value'") // scalafix:ok DisableSyntax.throw

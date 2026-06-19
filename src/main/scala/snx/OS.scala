@@ -34,7 +34,7 @@ object OS:
 
   /** Parse a host `os.name` or a Scala Native target-triple operating-system component into a supported [[OS]].
     *
-    * @throws UnsupportedTargetException
+    * @throws SNXError.UnsupportedTarget
     *   if `value` is not [[Linux]], [[Darwin]], or [[Windows]].
     */
   def parse(value: String): OS =
@@ -42,4 +42,4 @@ object OS:
     if n.startsWith("linux") then Linux
     else if n.startsWith("mac") || n.startsWith("osx") || n.startsWith("darwin") then Darwin
     else if n.startsWith("windows") then Windows
-    else throw UnsupportedTargetException(s"Unsupported operating system: '$value'") // scalafix:ok DisableSyntax.throw
+    else throw SNXError.UnsupportedTarget(s"Unsupported operating system: '$value'") // scalafix:ok DisableSyntax.throw

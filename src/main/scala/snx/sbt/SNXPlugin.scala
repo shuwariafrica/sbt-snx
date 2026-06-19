@@ -54,7 +54,7 @@ import sbt.Keys.testFrameworks
 import sbt.Keys.unmanagedResourceDirectories
 import sbt.Keys.unmanagedSourceDirectories
 import sbt.Keys.version
-import sbt.internal.util.MessageOnlyException
+import sbt.io.Hash
 import sbt.librarymanagement.Configurations.Runtime
 import sbt.librarymanagement.InclExclRule
 import sbt.librarymanagement.ModuleID
@@ -85,6 +85,7 @@ import scala.scalanative.testinterface.adapter.TestAdapter
 import scala.scalanative.util.Scope
 import scala.util.Using
 
+import snx.SNXError
 import snx.sbt.SNXImports.*
 
 /** sbt plugin for Scala Native projects: it adds the Scala Native compiler plugin and runtime dependencies, resolves
@@ -291,11 +292,11 @@ object SNXPlugin extends AutoPlugin:
       val log = streams.value.log
       log.info(command.mkString("running ", " ", ""))
       val exitCode = scala.sys.process.Process(command, baseDirectory.value, (run / envVars).value.toSeq*).!
-      if exitCode != 0 then fail(s"Nonzero exit code from ${binary.getName}: $exitCode")
+      if exitCode != 0 then fail(SNXError.RunFailed(s"Nonzero exit code from ${binary.getName}: $exitCode"))
     }.evaluated,
     runMain := Def.inputTask {
       val _ = Def.spaceDelimited("<arg>").parsed
-      fail("runMain is unsupported for Scala Native - a native binary has one entry point; use run.")
+      fail(SNXError.RunMainUnsupported("runMain is unsupported for Scala Native - a native binary has one entry point; use run."))
     }.evaluated
   )
 
@@ -305,7 +306,7 @@ object SNXPlugin extends AutoPlugin:
     */
   private def testSettings: Seq[Setting[?]] = Seq(
     loadedTestFrameworks := Def.uncached {
-      if fork.value then fail("Test / fork must be false for a Scala Native project.")
+      if fork.value then fail(SNXError.TestForkUnsupported("Test / fork must be false for a Scala Native project."))
       val frameworks = testFrameworks.value
       val names = frameworks.map(_.implClassNames.toList).toList
       val config = TestAdapter
@@ -323,9 +324,9 @@ object SNXPlugin extends AutoPlugin:
       .value
   )
 
-  /** Abort the enclosing task with a clean, stack-trace-free message. */
-  private def fail(message: String): Nothing =
-    throw MessageOnlyException(message) // scalafix:ok DisableSyntax.throw
+  /** Abort the enclosing task by raising the typed `error`. */
+  private def fail(error: SNXError): Nothing =
+    throw error // scalafix:ok DisableSyntax.throw
 
   /** Register a test adapter for closure when the enclosing sbt task completes (see `onComplete`). */
   private def register(adapter: TestAdapter): TestAdapter =
@@ -353,14 +354,14 @@ object SNXPlugin extends AutoPlugin:
     main: Option[String]): (BuildTarget, Boolean, Option[String]) =
     deliverable match
       case Deliverable.NIR =>
-        sys.error("the NIR deliverable is published as a jar, not linked")
+        fail(SNXError.NotLinkable("the NIR deliverable is published as a jar, not linked"))
       case Deliverable.Library =>
         val buildTarget = if linkage == Linkage.Static then BuildTarget.libraryStatic else BuildTarget.libraryDynamic
         (buildTarget, false, None)
       case Deliverable.Executable =>
-        if main.isEmpty then sys.error("an Executable deliverable requires a main class")
+        if main.isEmpty then fail(SNXError.MissingMainClass("an Executable deliverable requires a main class"))
         else if linkage == Linkage.Static && !runtime.supportsStaticLinking then
-          sys.error(s"static executable linking is not supported on $runtime (requires musl or MSVC)")
+          fail(SNXError.StaticLinkingUnsupported(s"static executable linking is not supported on $runtime (requires musl or MSVC)"))
         else (BuildTarget.application, linkage == Linkage.Static, main)
 
   /** Resolve the build target for a test binary: it always links `TestMain` as an application, and is static only
@@ -490,8 +491,9 @@ object SNXPlugin extends AutoPlugin:
     if !required then config
     else
       setting match
-        case Some(false) => fail("a native dependency requires multithreading, which this project has disabled")
-        case _           => config.withMultithreading(Some(true))
+        case Some(false) =>
+          fail(SNXError.MultithreadingRequired("a native dependency requires multithreading, which this project has disabled"))
+        case _ => config.withMultithreading(Some(true))
 
   /** Build each declared vendored library for `runtime` and fold its result onto `base`: the static archives as raw
     * link inputs, the header directories as `-I`, and the library's own per-platform [[Contribution]] merged onto the
@@ -543,7 +545,7 @@ object SNXPlugin extends AutoPlugin:
       case Origin.Git(uri, ref) =>
         val clones = new File(staging, "clones")
         cachedBuild(
-          slug(s"$uri-$ref"),
+          s"git-${Hash.trimHashString(s"$uri@$ref", 8)}",
           library.backend,
           runtime,
           s"git:$uri@$ref",

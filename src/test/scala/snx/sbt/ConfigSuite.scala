@@ -22,6 +22,7 @@ import scala.scalanative.build.NativeConfig
 import snx.ABI
 import snx.Arch
 import snx.NativeRuntime
+import snx.SNXError
 
 class ConfigSuite extends munit.FunSuite:
 
@@ -58,5 +59,5 @@ class ConfigSuite extends munit.FunSuite:
     assertEquals(
       SNXPlugin.enforceMultithreading(NativeConfig.empty, required = false, None).multithreading,
       NativeConfig.empty.multithreading)
-    intercept[Throwable](SNXPlugin.enforceMultithreading(NativeConfig.empty, required = true, Some(false)))
+    intercept[SNXError.MultithreadingRequired](SNXPlugin.enforceMultithreading(NativeConfig.empty, required = true, Some(false)))
 end ConfigSuite

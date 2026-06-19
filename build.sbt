@@ -61,8 +61,9 @@ def scriptedSettings: Seq[Def.Setting[?]] = Seq(
     // detect needs the injected platform ground truth (SNX_EXPECT_OS) the CI matrix sets per cell; static executables
     // need musl or MSVC; the library C-driver harness, the shell-script clang wrapper, the whole-archive
     // de-duplication link, and the zlib-backed integration capstone are Linux-only (the name-form whole-archive
-    // renders nothing on macOS; the capstone's C + zlib path is Linux). Everything else (including wholearchive) runs
-    // wherever clang is.
+    // renders nothing on macOS; the capstone's C + zlib path is Linux). The vendored fixtures build C with the CMake
+    // backend, unsupported on MinGW (MSVC is the supported Windows toolchain), so the whole group is skipped there.
+    // Everything else (including wholearchive) runs wherever clang is.
     new SimpleFileFilter(file =>
       file.getName match {
         case "detect"  => os.isEmpty
@@ -71,7 +72,7 @@ def scriptedSettings: Seq[Def.Setting[?]] = Seq(
         case "clang"   => os.exists(_ != "linux")
         case "dedup"   => os.exists(_ != "linux")
         case "hello"   => os.exists(_ != "linux")
-        case _         => false
+        case _         => env.contains("mingw") && Option(file.getParentFile).exists(_.getName == "vendored")
       })
   }
 )

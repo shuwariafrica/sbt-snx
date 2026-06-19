@@ -42,7 +42,7 @@ object NativeRuntime:
   /** Resolve a [[TargetPlatform]] and a Scala Native target triple into a [[NativeRuntime]], taking the toolchain ABI
     * from the triple's environment component.
     *
-    * @throws UnsupportedTargetException
+    * @throws SNXError.UnsupportedTarget
     *   on Linux or Windows when the triple identifies no supported ABI.
     */
   def parse(target: TargetPlatform, triple: String): NativeRuntime = target.os match
@@ -78,7 +78,7 @@ object NativeRuntime:
     environments(triple).flatMap(recognise).headOption.getOrElse(fail(component, triple))
 
   private def fail(component: String, triple: String): Nothing =
-    throw UnsupportedTargetException(s"Unable to determine the $component from target triple: '$triple'") // scalafix:ok DisableSyntax.throw
+    throw SNXError.UnsupportedTarget(s"Unable to determine the $component from target triple: '$triple'") // scalafix:ok DisableSyntax.throw
 
   extension (runtime: NativeRuntime)
     /** Whether the toolchain can link a fully static executable - musl on Linux, MSVC on Windows. */

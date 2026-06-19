@@ -26,7 +26,10 @@ import java.io.File
 import scala.sys.process.Process
 import scala.sys.process.ProcessLogger
 
+import snx.ABI
 import snx.NativeRuntime
+import snx.NativeRuntime.*
+import snx.SNXError
 
 /** The inputs a [[Backend]] receives to build one [[Vendored]] library: the resolved source directory, a staging
   * directory for its build outputs, the resolved [[snx.NativeRuntime NativeRuntime]], and the build logger.
@@ -65,7 +68,15 @@ private[sbt] object Backend:
       extends Backend:
 
     def build(context: BuildContext): Artefacts =
-      if !(context.source / "CMakeLists.txt").isFile then sys.error(s"snx: no CMakeLists.txt in ${context.source.getAbsolutePath}")
+      context.runtime match
+        case Windows(_, ABI.MinGw) =>
+          val message =
+            "snx: source-built C via the CMake backend is not supported on the MinGW toolchain; " +
+              "use the MSVC toolchain to build vendored C on Windows."
+          fail(SNXError.UnsupportedToolchain(message))
+        case Linux(_, _) | Darwin(_) | Windows(_, ABI.Msvc) => ()
+      if !(context.source / "CMakeLists.txt").isFile then
+        fail(SNXError.CMakeBuildFailed(s"snx: no CMakeLists.txt in ${context.source.getAbsolutePath}"))
       val buildDir = context.staging / "build"
       val prefix = context.staging / "prefix"
       IO.createDirectory(buildDir)
@@ -95,7 +106,9 @@ private[sbt] object Backend:
         context.log)
       val archives = prefix.allPaths.get().filter(file => file.isFile && isArchive(file.getName.nn))
       if archives.isEmpty then
-        sys.error(s"snx: cmake produced no static library under ${prefix.getAbsolutePath}; the project must define install() rules.")
+        fail(
+          SNXError.CMakeBuildFailed(
+            s"snx: cmake produced no static library under ${prefix.getAbsolutePath}; the project must define install() rules."))
       Artefacts(archives, Seq(prefix / "include").filter(_.isDirectory))
     end build
 
@@ -106,7 +119,9 @@ private[sbt] object Backend:
 
   private def isArchive(fileName: String): Boolean = fileName.endsWith(".a") || fileName.endsWith(".lib")
 
+  private def fail(error: SNXError): Nothing = throw error // scalafix:ok DisableSyntax.throw
+
   private def run(command: Seq[String], phase: String, log: Logger): Unit =
     val logger = ProcessLogger(line => log.info(line), line => log.error(line))
-    if Process(command).!(logger) != 0 then sys.error(s"snx: cmake $phase failed: ${command.mkString(" ")}")
+    if Process(command).!(logger) != 0 then fail(SNXError.CMakeBuildFailed(s"snx: cmake $phase failed: ${command.mkString(" ")}"))
 end Backend

@@ -30,7 +30,7 @@ object TargetPlatform:
   /** Parse operating-system and architecture identifiers (host `os.name` / `os.arch` or Scala Native target-triple
     * components) into a [[TargetPlatform]].
     *
-    * @throws UnsupportedTargetException
+    * @throws SNXError.UnsupportedTarget
     *   if either component is unsupported.
     */
   def parse(os: String, arch: String): TargetPlatform = TargetPlatform(OS.parse(os), Arch.parse(arch))

@@ -35,7 +35,7 @@ target with the toolchain `ABI` - the C library on Linux (`Glibc`/`Musl`), the r
 - resolved from the native target triple, so each case exposes only the values valid for its operating system:
 `Linux(arch, abi)`, `Darwin(arch)`, and `Windows(arch, abi)`. You set a `TargetPlatform`; you match on a
 `NativeRuntime`. An unsupported operating system, architecture, or toolchain ABI fails the build with
-`UnsupportedTargetException`.
+`SNXError.UnsupportedTarget`.
 
 ## Deliverables, linkage, and the build
 
@@ -102,6 +102,10 @@ per-platform link requirements the consuming link needs but a static archive can
 CMake configure `flags`. The build runs in a normal toolchain environment, so a CMakeLists using `find_package` or a
 toolchain file behaves as it does standalone (pass any extra `-D...` through the configure flags). Builds are cached
 locally and rerun only when the sources, configuration, or toolchain change.
+
+The CMake backend builds with CMake's default toolchain, which matches the Scala Native link on Linux, macOS, and the
+MSVC Windows toolchain. It is not supported on Windows MinGW - MSVC is the supported Windows toolchain - so a vendored
+CMake library there fails the build with a clear error rather than producing an unlinkable archive.
 
 ## Exported requirements and propagation
 

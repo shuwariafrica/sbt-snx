@@ -74,7 +74,9 @@ end Vendored
   */
 sealed trait Origin derives CanEqual:
 
-  /** Build with CMake, building the given `targets` (none builds the default). Static libraries are forced. */
+  /** Build with CMake, building the given `targets` (none builds the default). Static libraries are forced.
+    * Unsupported on the Windows MinGW toolchain, where it fails the build (MSVC is the supported Windows toolchain).
+    */
   def cmake(targets: String*): Vendored = cmake(targets, PartialFunction.empty)
 
   /** Build with CMake, building `targets` and adding per-platform configure `flags`. */

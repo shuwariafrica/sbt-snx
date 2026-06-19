@@ -26,7 +26,9 @@ class PlatformSuite extends munit.FunSuite:
     assertEquals(OS.parse("Windows 11"), OS.Windows)
 
   test("OS.parse rejects an unsupported operating system"):
-    intercept[UnsupportedTargetException](OS.parse("SunOS"))
+    val error = intercept[SNXError.UnsupportedTarget](OS.parse("SunOS"))
+    assert(clue(error.toString).contains("SunOS"))
+    assert(!error.toString.contains("UnsupportedTarget"))
 
   test("Arch.parse normalises architecture aliases"):
     assertEquals(Arch.parse("amd64"), Arch.X86_64)
@@ -35,7 +37,7 @@ class PlatformSuite extends munit.FunSuite:
     assertEquals(Arch.parse("arm64"), Arch.Aarch64)
 
   test("Arch.parse rejects an unsupported architecture"):
-    intercept[UnsupportedTargetException](Arch.parse("riscv64"))
+    intercept[SNXError.UnsupportedTarget](Arch.parse("riscv64"))
 
   test("TargetPlatform.classifier renders os-arch with the os-maven tokens"):
     assertEquals(TargetPlatform(OS.Darwin, Arch.Aarch64).classifier, "osx-aarch_64")
@@ -64,7 +66,7 @@ class PlatformSuite extends munit.FunSuite:
     assertEquals(NativeRuntime.parse(TargetPlatform(OS.Darwin, Arch.Aarch64), "arm64-apple-darwin"), NativeRuntime.Darwin(Arch.Aarch64))
 
   test("NativeRuntime.parse rejects a triple with no recognised ABI"):
-    intercept[UnsupportedTargetException](NativeRuntime.parse(TargetPlatform(OS.Linux, Arch.X86_64), "x86_64-unknown-linux-android"))
+    intercept[SNXError.UnsupportedTarget](NativeRuntime.parse(TargetPlatform(OS.Linux, Arch.X86_64), "x86_64-unknown-linux-android"))
 
   test("ABI carries its environment token"):
     assertEquals(ABI.Glibc.token, "gnu")
