@@ -23,7 +23,7 @@ name := "snxlib"
 publishTo := Some(MavenCache("snx-ivy", ivyRepo.value))
 enablePlugins(SNXPlugin)
 SNX.classified := true
-SNX.usage := { case _ => Usage.libraries("snx_classified_marker") }
+SNX.libraries := { case _ => Seq(NativeLibrary("snx_classified_marker")) }
 
 def entries(jar: File): Set[String] =
   val zip = new java.util.zip.ZipFile(jar)

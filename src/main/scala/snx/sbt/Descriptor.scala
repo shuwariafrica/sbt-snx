@@ -36,10 +36,10 @@ import snx.TargetPlatform
 /** The publishing coordinate of a native library, identifying the source of a [[Descriptor]]. */
 final private[sbt] case class Module(organization: String, name: String, version: String) derives CanEqual
 
-/** A native library's link requirements for one platform pattern: the toolchain-neutral tokens a consumer renders
-  * into its own link, and whether the consumer must link with multithreading. See [[Usage$ Usage]] to construct one.
+/** A native library's link requirements for one platform pattern: the toolchain-neutral channels and a multithreading
+  * requirement. See [[Usage$ Usage]].
   */
-final case class Usage(
+final private[sbt] case class Usage(
   libraries: Seq[String],
   frameworks: Seq[String],
   wholeArchive: Seq[String],
@@ -51,7 +51,7 @@ final case class Usage(
   /** Whether this declares no requirement. */
   def isEmpty: Boolean = this == Usage.empty
 
-  /** Combine two requirements channel-wise, preserving order; the multithreading requirement is the disjunction. */
+  /** Combine two requirements. */
   @targetName("combine") def ++(that: Usage): Usage =
     Usage(
       libraries ++ that.libraries,
@@ -62,62 +62,41 @@ final case class Usage(
       requiresMultithreading || that.requiresMultithreading
     )
 
-  /** This requirement with each channel de-duplicated, keeping the first occurrence and the link-line order. A
-    * duplicate whole-archive is a link error (the same archive force-loaded twice yields duplicate symbols), so
-    * combined requirements must be de-duplicated before they are rendered.
-    */
+  /** This requirement with each channel de-duplicated, first occurrence kept. */
   def distinct: Usage =
     Usage(libraries.distinct, frameworks.distinct, wholeArchive.distinct, defines.distinct, linkFlags.distinct, requiresMultithreading)
 end Usage
 
-/** Constructors for [[Usage]] - one per requirement channel, composed with `++`. */
-object Usage:
+/** Constructors and the empty value for [[Usage]], composed with `++`. */
+private[sbt] object Usage:
 
-  /** The empty requirement; the user-facing zero. */
+  /** The empty requirement. */
   def apply(): Usage = empty
 
   /** The empty requirement. */
   val empty: Usage = Usage(Nil, Nil, Nil, Nil, Nil, false)
 
-  /** Require the consumer to link the named system libraries (`-l<name>`). */
+  /** System libraries to link (`-l<name>`). */
   def libraries(name: String*): Usage = empty.copy(libraries = name.toSeq)
 
-  /** Require the consumer to link the named macOS frameworks. */
+  /** macOS frameworks to link. */
   def frameworks(name: String*): Usage = empty.copy(frameworks = name.toSeq)
 
-  /** Require the consumer to whole-archive the named libraries, each in its own platform's linker syntax. */
+  /** Libraries to whole-archive. */
   def wholeArchive(name: String*): Usage = empty.copy(wholeArchive = name.toSeq)
 
-  /** Require the consumer's own native compile to carry the preprocessor defines (`-D<name>`): those a consumer's own
-    * C - which includes this library's headers - must set for ABI and header consistency. Not the defines this
-    * library's own bundled C needs to compile, and not a NIR `@define` (which already propagates automatically).
-    */
+  /** Preprocessor defines (`-D<name>`) for the consumer's C. */
   def defines(name: String*): Usage = empty.copy(defines = name.toSeq)
 
-  /** Require the consumer's link to carry raw linker flags - the escape valve for what no token expresses. */
+  /** Raw linker flags. */
   def linkFlags(flag: String*): Usage = empty.copy(linkFlags = flag.toSeq)
 
-  /** Require the consumer to link with multithreading. */
+  /** Requires multithreading. */
   val multithreaded: Usage = empty.copy(requiresMultithreading = true)
-
-  /** Render `usage`'s tokens into a [[Contribution]] for `runtime`: system libraries (`-l`), frameworks (`-framework`,
-    * on macOS only), each whole-archive name in the platform's linker syntax, preprocessor defines (`-D`), and any raw
-    * link flags. The multithreading requirement is a config scalar, enforced separately, not a channel.
-    */
-  private[sbt] def render(usage: Usage, runtime: NativeRuntime): Contribution =
-    val frameworks = runtime match
-      case NativeRuntime.Darwin(_) => usage.frameworks.flatMap(name => Seq("-framework", name))
-      case _                       => Nil
-    val wholeArchive = usage.wholeArchive.flatMap(name => Modifier.wholeArchiveName(runtime, name))
-    Contribution.empty
-      .library(usage.libraries*)
-      .linkOptions((frameworks ++ wholeArchive ++ usage.linkFlags)*)
-      .define(usage.defines*)
 end Usage
 
-/** A native library's per-platform usage descriptor, published at [[Descriptor.resourcePath]] so a consumer
-  * resolving it links correctly. Keyed by platform pattern (`*`, `<os>`, `<os>-<arch>`, or `<os>-<arch>-<env>`). See
-  * [[Descriptor$ Descriptor]] for codecs and the producer/consumer folds.
+/** A native library's per-platform usage descriptor, keyed by platform pattern (`*`, `<os>`, `<os>-<arch>`, or
+  * `<os>-<arch>-<env>`). See [[Descriptor$ Descriptor]].
   */
 final private[sbt] case class Descriptor(module: Module, usage: Map[String, Usage]) derives CanEqual
 
@@ -199,9 +178,8 @@ private[sbt] object Descriptor:
   /** Parse a descriptor from its JSON text. */
   def parse(text: String): Descriptor = Converter.fromJsonUnsafe[Descriptor](Parser.parseUnsafe(text))
 
-  /** Build the descriptor a library publishes: evaluate the library's own exported `requirements` (its project usage
-    * combined with its compile-visible dependencies' requirements) over the platforms the jar serves - the `target`'s
-    * [[snx.ABI ABI]] variants when `classified`, otherwise every platform - de-duplicate each, then reduce to the
+  /** Build the descriptor a library publishes: evaluate `requirements` over the platforms the jar serves (the
+    * `target`'s [[snx.ABI ABI]] variants when `classified`, else every platform), de-duplicate, then collapse to the
     * broadest pattern per shared requirement.
     */
   def build(module: Module, classified: Boolean, target: TargetPlatform, requirements: PartialFunction[NativeRuntime, Usage]): Descriptor =
@@ -209,9 +187,8 @@ private[sbt] object Descriptor:
     val declared = runtimes.flatMap(runtime => requirements.lift(runtime).map(_.distinct).filterNot(_.isEmpty).map(runtime -> _)).toMap
     Descriptor(module, collapse(declared))
 
-  /** Fold the descriptors on a consumer's classpath into the requirement for `runtime`: each descriptor resolves
-    * most-specific-per-field, the results combine in dependency (link-line) order, and the combined channels are
-    * de-duplicated (first occurrence wins) so a requirement two descriptors share is not emitted twice.
+  /** Fold the descriptors on a consumer's classpath into the requirement for `runtime`: each resolves
+    * most-specific-per-field, combined in dependency order, channels de-duplicated.
     */
   def fold(descriptors: Seq[Descriptor], runtime: NativeRuntime): Usage =
     descriptors.map(descriptor => resolve(descriptor.usage, runtime)).foldLeft(Usage.empty)(_ ++ _).distinct

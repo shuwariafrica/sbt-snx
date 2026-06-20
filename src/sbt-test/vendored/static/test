@@ -1,0 +1,4 @@
+# A vendored CMake static archive folded into a fully-static executable (musl or MSVC; gated by the excludeFilter). The
+# binary runs and verifies the answer; checkStatic then asserts it carries no dynamic dependencies (Linux).
+> run
+> checkStatic

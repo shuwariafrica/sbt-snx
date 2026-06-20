@@ -5,7 +5,7 @@ val producer = project
   .enablePlugins(SNXPlugin)
   .settings(
     scalaVersion := "3.8.4",
-    SNX.usage := { case _ => Usage.libraries("snx_propagated_absent") }
+    SNX.libraries := { case _ => Seq(NativeLibrary("snx_propagated_absent")) }
   )
 
 val consumer = project

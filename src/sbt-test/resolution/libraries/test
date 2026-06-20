@@ -1,0 +1,3 @@
+# the += / ++= lift and the := partial-function and Seq forms compile at the real autoImport site (the build loading
+# proves the compile), and the lift accumulates every library onto the per-platform setting
+> checkLift

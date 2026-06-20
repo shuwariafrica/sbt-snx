@@ -17,8 +17,8 @@
  ****************************************************************/
 package snx.sbt
 
-/** The kind of artefact a project produces: platform-independent `NIR` (published as a jar), a native `Library`, or
-  * an `Executable`. The publish-versus-link discriminant. See [[Deliverable$ Deliverable]].
+/** The kind of artefact a project produces, and the publish-versus-link discriminant: platform-independent `NIR`
+  * (published as a jar), a native `Library`, or an `Executable`.
   */
 enum Deliverable derives CanEqual:
   case NIR, Library, Executable

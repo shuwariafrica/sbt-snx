@@ -1,0 +1,5 @@
+# A vendored Git source pins a ref. setupRepo creates a local repo offline (no network) where tag v1 returns 42 but a
+# later HEAD returns 0, so the binary printing 42 proves the plugin cloned AND checked out the pinned tag v1 (not
+# HEAD), then built it with cmake and linked it.
+> setupRepo
+> run

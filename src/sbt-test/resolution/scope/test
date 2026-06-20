@@ -1,0 +1,3 @@
+# a library with no configuration exports into the published descriptor; a `% Test` library - scoped to the test link
+# in its own definition - does not (that it still folds into the test link is proven by vendored/test)
+> checkScope

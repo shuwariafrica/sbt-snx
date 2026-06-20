@@ -22,23 +22,14 @@ import sbt.librarymanagement.ModuleID
 
 import scala.annotation.targetName
 
-import snx.NativeRuntime
-
 /** Marker for `moduleID % NativeClassifier`: resolve the dependency under the build's OS/arch classifier. */
 object NativeClassifier
 
-/** A managed native dependency: a fluent `ModuleID` superset that additionally carries whether to resolve under the
-  * build's OS/arch classifier (`% NativeClassifier`) and the per-platform link [[Usage]] requirements it contributes
-  * (`options`). The requirements supplement an under-declaring dependency - one that ships no `native.json` of its
-  * own - so they fold into this project's link AND propagate into this project's published descriptor, reaching every
-  * downstream consumer. The dependency builders are forwarded, each returning a [[NativeDependency]]; a `ModuleID`
-  * lifts into one through the conversions in [[SNXImports$ SNXImports]]. See [[NativeDependency$ NativeDependency]].
+/** A managed native dependency: a `ModuleID` superset carrying whether to resolve under the build's OS/arch classifier
+  * (`% NativeClassifier`). The `ModuleID` builders are forwarded; a `ModuleID` lifts into one through the conversions in
+  * [[SNXImports$ SNXImports]].
   */
-final case class NativeDependency private[sbt] (
-  module: ModuleID,
-  classified: Boolean,
-  requirements: PartialFunction[NativeRuntime, Usage]
-) derives CanEqual:
+final case class NativeDependency private[sbt] (module: ModuleID, classified: Boolean) derives CanEqual:
 
   /** Resolve under the build's OS/arch classifier. */
   @targetName("classified")
@@ -52,19 +43,8 @@ final case class NativeDependency private[sbt] (
   @targetName("configurations")
   def %(configurations: String): NativeDependency = copy(module = module.withConfigurations(Some(configurations)))
 
-  /** Attach the per-platform link requirements this dependency needs but does not declare itself; platforms the
-    * partial function does not match contribute nothing.
-    */
-  infix def options(requirements: PartialFunction[NativeRuntime, Usage]): NativeDependency = copy(requirements = requirements)
-
   def exclude(org: String, name: String): NativeDependency = copy(module = module.exclude(org, name))
   def intransitive(): NativeDependency = copy(module = module.intransitive())
   def changing(): NativeDependency = copy(module = module.changing())
   def force(): NativeDependency = copy(module = module.force())
 end NativeDependency
-
-/** Factory for [[NativeDependency]]. */
-object NativeDependency:
-
-  private[sbt] def apply(module: ModuleID, classified: Boolean): NativeDependency =
-    NativeDependency(module, classified, PartialFunction.empty)

@@ -22,6 +22,7 @@ import scala.scalanative.build.BuildTarget
 import snx.ABI
 import snx.Arch
 import snx.NativeRuntime
+import snx.SNXError
 
 class LinkSuite extends munit.FunSuite:
 
@@ -30,10 +31,10 @@ class LinkSuite extends munit.FunSuite:
   private val darwin = NativeRuntime.Darwin(Arch.Aarch64)
 
   test("the NIR deliverable is not linked"):
-    intercept[RuntimeException](SNXPlugin.resolveTarget(Deliverable.NIR, Linkage.Dynamic, glibc, Some("Main")))
+    intercept[SNXError.NotLinkable](SNXPlugin.resolveTarget(Deliverable.NIR, Linkage.Dynamic, glibc, Some("Main")))
 
   test("an Executable requires a main class"):
-    intercept[RuntimeException](SNXPlugin.resolveTarget(Deliverable.Executable, Linkage.Dynamic, glibc, None))
+    intercept[SNXError.MissingMainClass](SNXPlugin.resolveTarget(Deliverable.Executable, Linkage.Dynamic, glibc, None))
 
   test("a dynamic Executable links as an application carrying its main class"):
     val (target, static, main) = SNXPlugin.resolveTarget(Deliverable.Executable, Linkage.Dynamic, glibc, Some("Main"))
@@ -42,7 +43,7 @@ class LinkSuite extends munit.FunSuite:
     assertEquals(main, Some("Main"))
 
   test("a static Executable is rejected where the platform cannot link statically"):
-    intercept[RuntimeException](SNXPlugin.resolveTarget(Deliverable.Executable, Linkage.Static, glibc, Some("Main")))
+    intercept[SNXError.StaticLinkingUnsupported](SNXPlugin.resolveTarget(Deliverable.Executable, Linkage.Static, glibc, Some("Main")))
 
   test("a static Executable links on a static-capable platform"):
     val (target, static, _) = SNXPlugin.resolveTarget(Deliverable.Executable, Linkage.Static, musl, Some("Main"))

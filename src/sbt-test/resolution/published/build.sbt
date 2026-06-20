@@ -11,11 +11,11 @@ publishTo := Some(MavenCache("snx-pub", (LocalRootProject / baseDirectory).value
 
 val cls = project
   .enablePlugins(SNXPlugin)
-  .settings(name := "cls", SNX.classified := true, SNX.usage := { case _ => Usage.libraries("snx_cls_marker") })
+  .settings(name := "cls", SNX.classified := true, SNX.libraries := { case _ => Seq(NativeLibrary("snx_cls_marker")) })
 
 val uni = project
   .enablePlugins(SNXPlugin)
-  .settings(name := "uni", SNX.usage := { case _ => Usage.libraries("snx_uni_marker") })
+  .settings(name := "uni", SNX.libraries := { case _ => Seq(NativeLibrary("snx_uni_marker")) })
 
 def entries(jar: File): Set[String] =
   val zip = new java.util.zip.ZipFile(jar)

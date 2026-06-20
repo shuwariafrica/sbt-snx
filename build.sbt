@@ -29,6 +29,7 @@ Compile / sourceGenerators += Def.task {
        |
        |private[sbt] object BuildInfo:
        |  inline val nativeVersion = "${Dependencies.`scala-native-tools`.revision}"
+       |  inline val version = "${version.value}"
        |""".stripMargin
   )
   Seq(file)
@@ -60,8 +61,10 @@ def scriptedSettings: Seq[Def.Setting[?]] = Seq(
     // detect needs the injected platform ground truth (SNX_EXPECT_OS) the CI matrix sets per cell; static executables
     // need musl or MSVC; the library C-driver harness, the shell-script clang wrapper, the whole-archive
     // de-duplication link, and the zlib-backed integration capstone are Linux-only (the name-form whole-archive
-    // renders nothing on macOS; the capstone's C + zlib path is Linux). Everything else (including wholearchive) runs
-    // wherever clang is.
+    // renders nothing on macOS; the capstone's C + zlib path is Linux). The vendored CMake fixtures are unsupported on
+    // MinGW (MSVC is the supported Windows toolchain), so they are skipped there; `vendored/command` drives its own
+    // build (the Command escape hatch) and runs everywhere. Everything else (including wholearchive) runs wherever
+    // clang is.
     new SimpleFileFilter(file =>
       file.getName match {
         case "detect"  => os.isEmpty
@@ -70,7 +73,7 @@ def scriptedSettings: Seq[Def.Setting[?]] = Seq(
         case "clang"   => os.exists(_ != "linux")
         case "dedup"   => os.exists(_ != "linux")
         case "hello"   => os.exists(_ != "linux")
-        case _         => false
+        case _         => env.contains("mingw") && Option(file.getParentFile).exists(_.getName == "vendored") && file.getName != "command"
       })
   }
 )

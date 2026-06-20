@@ -25,35 +25,18 @@ import snx.NativeRuntime.Darwin
 import snx.NativeRuntime.Linux
 import snx.NativeRuntime.Windows
 
-/** A per-platform transform of a native configuration `A`: applied for the platforms it matches, contributing
-  * nothing elsewhere. See [[Modifier$ Modifier]] for the carrier and the whole-archive intent.
-  */
+/** A per-platform transform of a native configuration `A`, applied where it matches. See [[Modifier$ Modifier]]. */
 type Modifier[A] = PartialFunction[NativeRuntime, A => A]
 
-/** Carrier and constructors for [[Modifier]]. A platform-specific configuration is written directly as a partial
-  * function over the resolved [[NativeRuntime]] - `platform` carries one for [[Native]] modifiers under `+=`, and a
-  * [[Contribution]] modifier is a bare literal whose target the enclosing setting parameter supplies.
-  */
+/** Carrier and constructors for [[Modifier]]. */
 object Modifier:
 
-  /** Carry a per-platform partial function as a [[Modifier]], so a bare literal types under `+=` (where the element
-    * type is not propagated) without an explicit function-argument annotation.
-    */
+  /** Carry a per-platform partial function as a [[Modifier]] so a bare literal types under `+=`. */
   def platform(modifier: PartialFunction[NativeRuntime, Native => Native]): Modifier[Native] = modifier
 
-  /** Force-link every object file of the static archive at `archive`, including ones nothing references. Valid on
-    * every platform - macOS `-force_load`, MSVC `/WHOLEARCHIVE:`, GNU ld `--whole-archive`.
-    */
+  /** Force-load every object file of the static archive at `archive`, in each platform's linker syntax. */
   def wholeArchive(archive: File): Modifier[Native] = { case runtime =>
     native => native.linkOptions(wholeArchivePath(runtime, archive.getAbsolutePath.nn)*)
-  }
-
-  /** Force-link every object file of the named static library (`-l<name>`), including ones nothing references. macOS
-    * has no name-based whole-archive linker form, so this contributes nothing there; use the `File` overload for
-    * macOS.
-    */
-  def wholeArchive(name: String): Modifier[Native] = { case runtime @ (Linux(_, _) | Windows(_, _)) =>
-    native => native.linkOptions(wholeArchiveName(runtime, name)*)
   }
 
   private[sbt] def wholeArchivePath(runtime: NativeRuntime, path: String): Seq[String] = runtime match

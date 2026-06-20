@@ -1,5 +1,6 @@
 # the native library links, folding core's zlib requirement from its descriptor (engine never declares zlib)
 > engine/Compile/snxLink
 # the application links and runs: core's bundled C needs zlib, and -lz arrives via core's descriptor (app never
-# declares it); the binary prints the zlib version and asserts it is non-empty
+# declares it); app also provisions vendor/answer from source with CMake (a vendored NativeLibrary) and links it. The
+# binary prints the zlib version and the vendored answer, and asserts both.
 > app/run

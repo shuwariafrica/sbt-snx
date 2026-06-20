@@ -20,7 +20,7 @@ package snx.sbt
 import snx.NativeRuntime
 
 /** How a native `Library` or `Executable` is linked: a fully `Static` artefact, or a `Dynamic` one. See
-  * [[Linkage$ Linkage]] for the lift that lets a single value stand for a per-platform selector.
+  * [[Linkage$ Linkage]].
   */
 enum Linkage derives CanEqual:
   case Static, Dynamic
@@ -28,7 +28,5 @@ enum Linkage derives CanEqual:
 /** The single-value lift for [[Linkage]]. */
 object Linkage:
 
-  /** Lift one [[Linkage]] to a constant per-platform selector, so `SNX.linkage := Static` types alongside the
-    * `SNX.linkage := { case ... }` partial-function form.
-    */
+  /** Lift a [[Linkage]] to a constant per-platform selector. */
   given Conversion[Linkage, PartialFunction[NativeRuntime, Linkage]] = linkage => { case _ => linkage }

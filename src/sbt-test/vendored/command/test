@@ -1,0 +1,5 @@
+# A vendored library built by the Command escape hatch (clang + archiver, no CMake) folds into the native link: the
+# built libanswer.a provides snx_answer and the vendored include dir reaches the C compile. This backend drives its own
+# build, so it runs on every toolchain - MinGW included, where the CMake backend is unsupported. The binary runs and
+# verifies the answer end to end.
+> run
