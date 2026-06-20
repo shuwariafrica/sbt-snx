@@ -76,7 +76,9 @@ private[sbt] object Backend:
       val buildDir = context.staging / "build"
       val prefix = context.staging / "prefix"
       IO.createDirectory(buildDir)
-      val overrides = moduleOverrides.toSeq.map(dir => s"-DCMAKE_MODULE_PATH=${dir.getAbsolutePath}")
+      // CMake re-parses a -D string value as CMake code, so a Windows backslash path reads as escape sequences (`\U`,
+      // ...) and aborts configure; forward slashes are accepted on every platform.
+      val overrides = moduleOverrides.toSeq.map(dir => s"-DCMAKE_MODULE_PATH=${dir.getAbsolutePath.nn.replace('\\', '/')}")
       val configureFlags = flags.applyOrElse(context.runtime, (_: NativeRuntime) => Nil)
       run(
         Seq(

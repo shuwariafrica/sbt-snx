@@ -63,18 +63,20 @@ class ConfigSuite extends munit.FunSuite:
     SNXPlugin.requireProvisioned(Seq(NativeLibrary("foo")))
     SNXPlugin.requireProvisioned(Seq(NativeLibrary("foo", Vendored.local("v").cmake("x")).noSystemDefault))
 
-  private val stub: Vendored => Artefacts = _ => Artefacts(Seq(new java.io.File("/x/libfoo.a")), Seq.empty)
+  private val archive = new java.io.File("/x/libfoo.a")
+  private val archivePath = archive.getAbsolutePath.nn
+  private val stub: Vendored => Artefacts = _ => Artefacts(Seq(archive), Seq.empty)
   private def vendored = Provisioning.Vendored(Vendored.local("vendor/foo").cmake("foo"))
 
   test("the rebind renders an unprovisioned default -l, replaces a vendored name with its archive, keeps link order"):
     val requirements = Usage(Seq("a", "foo", "b"), Nil, Nil, Nil, Nil, false)
     val (config, _) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("foo" -> vendored), glibc, stub)
-    assertEquals(config.linkingOptions, Seq("-la", "/x/libfoo.a", "-lb"))
+    assertEquals(config.linkingOptions, Seq("-la", archivePath, "-lb"))
 
   test("the rebind whole-archives a vendored archive in WholeArchive mode and the platform's linker syntax"):
     val requirements = Usage(Nil, Nil, Seq("foo"), Nil, Nil, false)
     val (config, _) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("foo" -> vendored), glibc, stub)
-    assertEquals(config.linkingOptions, Seq("-Wl,--whole-archive", "/x/libfoo.a", "-Wl,--no-whole-archive"))
+    assertEquals(config.linkingOptions, Seq("-Wl,--whole-archive", archivePath, "-Wl,--no-whole-archive"))
 
   test("the rebind suppresses an Unmanaged library's default and renders an unclaimed name's default"):
     val requirements = Usage(Seq("compiled_in", "sys"), Nil, Nil, Nil, Nil, false)
