@@ -1,4 +1,3 @@
-import scala.scalanative.build.Discover
 import scala.sys.process.Process
 
 enablePlugins(SNXPlugin)
@@ -10,11 +9,12 @@ SNX.deliverable := Executable
 // A vendored library built by the Command escape hatch: the function drives clang and the archiver itself (no CMake),
 // so it works on every toolchain, MinGW included. `token` keys the build cache. It compiles vendor/answer/answer.c
 // into libanswer.a and exposes vendor/answer/include; the resulting Artefacts fold into the native link exactly as the
-// CMake backend's do. The clang + archiver resolution mirrors link/wholearchive so it is host-agnostic.
-SNX.vendored += Vendored.local("vendor/answer").command("answer-1") { ctx =>
-  val clang = Discover.clang()
-  val clangDir = clang.getParent.toFile
-  val exe = if (clang.getFileName.toString.endsWith(".exe")) ".exe" else ""
+// CMake backend's do. It uses ctx.clang - the compiler the Scala Native link uses, honouring an SNX.clang override - so
+// the command build is toolchain-consistent with the link; the archiver resolution mirrors link/wholearchive.
+SNX.libraries += NativeLibrary("answer", Vendored.local("vendor/answer").command("answer-1") { ctx =>
+  val clang = ctx.clang
+  val clangDir = clang.getParentFile
+  val exe = if (clang.getName.endsWith(".exe")) ".exe" else ""
   val obj = ctx.staging / "answer.o"
   val lib = ctx.staging / "libanswer.a"
   // The vendored fold caches the returned paths, so every output (the archive and the headers) must live under the
@@ -23,7 +23,8 @@ SNX.vendored += Vendored.local("vendor/answer").command("answer-1") { ctx =>
   IO.createDirectory(ctx.staging)
   IO.copyDirectory(ctx.source / "include", include)
   val compiled =
-    Process(Seq(clang.toString, "-c", (ctx.source / "answer.c").getAbsolutePath, "-I", include.getAbsolutePath, "-o", obj.getAbsolutePath)).!
+    Process(
+      Seq(clang.getAbsolutePath, "-c", (ctx.source / "answer.c").getAbsolutePath, "-I", include.getAbsolutePath, "-o", obj.getAbsolutePath)).!
   assert(compiled == 0, s"answer.c failed to compile (exit $compiled)")
   val msvc = ctx.runtime match
     case NativeRuntime.Windows(_, ABI.Msvc) => true
@@ -40,4 +41,4 @@ SNX.vendored += Vendored.local("vendor/answer").command("answer-1") { ctx =>
   assert(Process(archive).! == 0, s"libanswer.a failed to build using ${archiver.getName}")
   ctx.log.info(s"snx vendored/command: built ${lib.getName} via ${archiver.getName} for ${ctx.runtime}")
   Artefacts(Seq(lib), Seq(include))
-}
+})

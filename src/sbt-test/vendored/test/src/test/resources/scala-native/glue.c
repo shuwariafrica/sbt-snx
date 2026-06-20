@@ -1,12 +1,9 @@
 #include "answer.h"
 
-// These defines arrive only via the test-scoped vendored library's per-platform options, so a successful compile of
-// this test-only glue proves the compile and c channels reach the test C compile.
-#ifndef SNX_VENDORED_COMPILE
-#error "SNX_VENDORED_COMPILE not defined - the vendored compile option did not reach the test C compile"
-#endif
-#ifndef SNX_VENDORED_C
-#error "SNX_VENDORED_C not defined - the vendored c option did not reach the test C compile"
+// This define arrives only via the test-scoped vendored library's link closure (Flags.defines -> -D), so a successful
+// compile of this test-only glue proves the closure define reaches the test C compile.
+#ifndef SNX_VENDORED
+#error "SNX_VENDORED not defined - the vendored library's closure define did not reach the test C compile"
 #endif
 
 int snx_glue(void) { return snx_answer(); }

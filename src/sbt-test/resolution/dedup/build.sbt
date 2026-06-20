@@ -12,8 +12,8 @@ scalaVersion := "3.8.4"
 val archive = settingKey[File]("the static archive both libraries' descriptors force-load")
 val buildDupArchive = taskKey[Unit]("compile dup.c into libdup.a, exporting a non-static global, for the resolved platform")
 
-val a = project.enablePlugins(SNXPlugin).settings(SNX.usage := { case _ => Usage.wholeArchive("dup") })
-val b = project.enablePlugins(SNXPlugin).settings(SNX.usage := { case _ => Usage.wholeArchive("dup") })
+val a = project.enablePlugins(SNXPlugin).settings(SNX.libraries := { case _ => Seq(NativeLibrary("dup").wholeArchive) })
+val b = project.enablePlugins(SNXPlugin).settings(SNX.libraries := { case _ => Seq(NativeLibrary("dup").wholeArchive) })
 
 val consumer = project
   .enablePlugins(SNXPlugin)

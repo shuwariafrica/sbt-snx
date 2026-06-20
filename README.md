@@ -30,12 +30,16 @@ an `SNX` object; the platform types (`TargetPlatform`, `OS`, `Arch`, `NativeRunt
 ## The platform model
 
 `TargetPlatform` pairs an `OS` (`Linux`/`Darwin`/`Windows`) with an `Arch` (`X86_64`/`Aarch64`) - the setting-time
-coordinate you choose, defaulting to the build host. `NativeRuntime` is the task-time key you match on: it refines the
-target with the toolchain `ABI` - the C library on Linux (`Glibc`/`Musl`), the runtime ABI on Windows (`Msvc`/`MinGw`)
-- resolved from the native target triple, so each case exposes only the values valid for its operating system:
-`Linux(arch, abi)`, `Darwin(arch)`, and `Windows(arch, abi)`. You set a `TargetPlatform`; you match on a
-`NativeRuntime`. An unsupported operating system, architecture, or toolchain ABI fails the build with
-`SNXError.UnsupportedTarget`.
+coordinate, defaulting to the build host. `NativeRuntime` is the task-time key matched against: it refines the
+target with the toolchain `ABI` - the C library on Linux (`Glibc`/`Musl`), the runtime ABI on Windows (`Msvc`/`MinGw`) -
+resolved from the native target triple, so each case exposes only the values valid for its operating system:
+
+- `Linux(arch, abi)`
+- `Darwin(arch)`
+- `Windows(arch, abi)`
+
+Determining the current configured `TargetPlatform` can be achieved in tasks by maching against a `NativeRuntime`. An
+unsupported operating system, architecture, or toolchain ABI fails the build with `SNXError.UnsupportedTarget`.
 
 ## Deliverables, linkage, and the build
 
@@ -51,12 +55,13 @@ and `test` override sbt's defaults.
 ## Native configuration
 
 `SNX.config` is the resolved Scala Native configuration: the discovered toolchain, then the scalar settings
-(`SNX.mode`, `SNX.gc`, `SNX.lto`, `SNX.optimize`, `SNX.sanitizer`, `SNX.multithreading`), then the matched per-platform
+(`SNX.mode`, `SNX.gc`, `SNX.lto`, `SNX.optimize`, `SNX.sanitizer`, `SNX.multithreading`), then the propagated link
+requirements (from `SNX.libraries`, `SNX.flags`, and the classpath's descriptors), then the matched per-platform
 `SNX.modifiers`, applied last so a modifier has the final say. A `Modifier[Native]` is a partial function from the
 resolved `NativeRuntime` to a `Native` transform, carried with `Modifier.platform`. The `Native` surface offers the raw
 option channels (`linkOptions`, `compileOptions`, `cOptions`, `cppOptions`), the structured `library`/`include`/
-`define`, the scalars, and `embedResources`/`finalFields`/`debugSymbols`/`linktimeProperty`, with `update` for anything
-else. `Modifier.wholeArchive(archive)` force-links a whole static archive in each platform's linker syntax.
+`define`, the scalar settings above, `embedResources`/`debugSymbols`/`finalFields`/`linktimeProperty`, and `update` for
+anything else. `Modifier.wholeArchive(archive)` force-links a whole static archive in each platform's linker syntax.
 `SNX.includeDirs` and `SNX.libDirs` add `-I`/`-L` directories - host-discovered paths are dropped when cross-targeting,
 so a cross build is not contaminated by the host toolchain's directories - and `SNX.clang`/`SNX.clangPP` override the
 discovered compilers. `.c`, `.cpp`, and `.S` sources under `src/main/resources/scala-native/` are compiled into the
@@ -64,44 +69,77 @@ binary at link time.
 
 ## Native dependencies
 
-`SNX.dependencies` carries classified or requirement-bearing native dependencies; plain JVM/NIR dependencies may stay in
-`libraryDependencies`. `% NativeClassifier` resolves a dependency under the build's OS/arch classifier, and `options`
-attaches the per-platform link `Usage` requirements a dependency needs but does not declare itself - useful for an
-under-declaring dependency that ships no descriptor of its own:
+`SNX.dependencies` carries managed native dependencies - those resolved per OS/arch under a classifier. `% NativeClassifier`
+resolves a dependency under the build's OS/arch classifier; plain JVM or NIR dependencies may stay in `libraryDependencies`:
 
 ```scala
-SNX.dependencies += "org.acme" %% "blas" % "0.9" % NativeClassifier options {
-  case Linux(_, _) => Usage.libraries("m")
+SNX.dependencies += "org.acme" %% "fastmath" % "1.2" % NativeClassifier
+```
+
+A managed native dependency is a pure coordinate. Its link requirements arrive through its own published descriptor,
+recursively, so a consumer that resolves it gets them automatically - it never restates them.
+
+## Native libraries
+
+`SNX.libraries` declares the native C-world libraries a link requires, per platform. A `NativeLibrary` is one declared
+unit: a linker `name`, a link mode (a plain `-l`, a macOS framework, or a whole-archive force-load), and a provisioning -
+how this project supplies the library's symbols and headers:
+
+- **System** (the default): provided by the operating system, linked as `-l<name>`.
+- **Vendored**: built from source and folded into the link (below).
+- **Unmanaged**: compiled in from `.c`/`.cpp`/`.S` sources under `src/main/resources/scala-native/`.
+
+```scala
+SNX.libraries := {
+  case Linux(_, _)   => Seq(NativeLibrary("z"), NativeLibrary("ssl"))
+  case Darwin(_)     => Seq(NativeLibrary.framework("Security"))
+  case Windows(_, _) => Seq(NativeLibrary("zlib"))
 }
 ```
 
-These requirements fold into this project's own link and propagate into its published descriptor, so they reach
-downstream consumers too.
+One declaration drives both this project's own link and - for the name and link mode alone, never the provisioning - the
+published descriptor. So a published NIR library whose bundled C needs `-lz` declares it once; a consumer resolving the
+library folds the descriptor for its own runtime and links `-lz` automatically, however deep the library sits in the
+dependency graph. A consuming application never restates it. (Scala Native already propagates the name of a
+`@link`-annotated binding; `SNX.libraries` is for the libraries the bundled C needs that it does not.)
 
-## Source-built C libraries
+Publisher and consumer declare a library the same way, and a matching name **rebinds**: a consumer that provisions a
+library the descriptor named - say, vendoring from source a library an upstream linked from the system - declares the
+same `NativeLibrary` name with its own provisioning, and the link realises it from that provisioning instead of the
+default `-l<name>`. When a project provisions libraries locally, the link reports how each requirement resolved -
+rebound to a vendored or unmanaged provisioning, or left to its default `-l<name>` - so a mistyped provisioning is
+visible.
 
-`SNX.vendored` builds a C/C++ library from source and folds it into the native link - the source-built counterpart to
-the managed `SNX.dependencies`. It is local to the build and never published: the built archive folds into a link
-directly and never travels in a descriptor (a library that ships C publishes that C as source). It is config-scoped, so
-a `Test / SNX.vendored` library is built only for the test link.
+`.wholeArchive` force-loads every member of a library (for example to keep `__attribute__((constructor))`
+registrations); `NativeLibrary.framework(name)` is a macOS framework, contributing nothing elsewhere. A library declared
+`.noSystemDefault` that no provisioning supplies fails the build with a directed message rather than an unresolved
+`-l<name>` at link time.
 
-A library is declared from an origin and a build backend, with optional per-platform link contributions:
+A library carries the configurations it applies to in its own definition, like a managed dependency: `NativeLibrary("z")
+% Test` scopes it to the test link (it folds into the test binary's link and does not export), while a library with no
+configuration applies to every link and exports.
+
+### Source-built C libraries
+
+A `Vendored` provisioning builds a C/C++ library from source and folds it into the link. It is local to the build and
+never published - the built archive folds into a link directly, and a library that ships C publishes that C as source,
+so a vendored provisioning for a NIR library is scoped `% Test`, for the binding tests' own link (below).
 
 ```scala
-SNX.vendored += Vendored
-  .local("vendor/mylib")
-  .cmake("mylib")
-  .options { case Linux(_, _) => _.library("m") }
+SNX.libraries += NativeLibrary(
+  "mylib",
+  Vendored.local("vendor/mylib").cmake("mylib").options { case Linux(_, _) => Flags.libraries("m") })
 ```
 
 `local(directory)` builds a directory under the project (resolved against the project, then the build root);
-`git(uri, ref)` clones a Git repository at a pinned ref (a tag, commit, or branch). `cmake`
-configures, builds, installs, and collects the static archives and headers, forcing static libraries
-(`-DBUILD_SHARED_LIBS=OFF`); per-platform configure flags pass as `cmake(targets, flags)`. `options` adds the
-per-platform link requirements the consuming link needs but a static archive cannot carry itself - distinct from the
-CMake configure `flags`. The build runs in a normal toolchain environment, so a CMakeLists using `find_package` or a
-toolchain file behaves as it does standalone (pass any extra `-D...` through the configure flags). Builds are cached
-locally and rerun only when the sources, configuration, or toolchain change.
+`git(uri, ref)` clones a Git repository at a `ref` (a tag, commit, or branch; a branch is frozen on first clone, so
+pin a tag or commit for a reproducible build). `cmake` configures, builds,
+installs, and collects the static archives and headers, forcing static libraries (`-DBUILD_SHARED_LIBS=OFF`);
+per-platform configure flags pass as `cmake(targets, flags)`. `options` adds the library's per-platform link closure -
+the transitive `-l`/flags/defines a static archive cannot carry itself - applied at this provisioning site and never
+published (distinct from the CMake configure `flags`). The build runs in a normal toolchain environment, so a
+CMakeLists using `find_package` or a toolchain file behaves as it does standalone. Builds are cached locally and rerun
+only when the sources, configuration, or toolchain change.
 
 The CMake backend builds with CMake's default toolchain, which matches the Scala Native link on Linux, macOS, and the
 MSVC Windows toolchain. It is not supported on Windows MinGW - MSVC is the supported Windows toolchain - so a vendored
@@ -110,18 +148,18 @@ CMake library there fails the build with a clear error rather than producing an 
 For a build CMake does not cover - Make, Autotools, a hand-rolled script - `command(token) { ctx => ... }` is the
 escape hatch: the function builds from `ctx.source` into `ctx.staging` and returns the archives and header directories
 to fold in (an `Artefacts`, whose paths must lie under `ctx.staging` so they are cached); `token` keys the build cache.
-Because the build is yours to drive, `command` works on any toolchain - MinGW included.
+`command` allows use of any toolchain - MinGW included.
 
-## Exported requirements and propagation
+## Other link requirements
 
-A native library that bundles C may require its consumers to link extra system libraries, frameworks, or whole
-archives - things Scala Native does not propagate on its own (the library name of a `@link`-annotated binding already
-does). `SNX.usage` declares these per platform, as toolchain-neutral tokens. They render into the library's own link
-and travel in a descriptor inside the library's jar; a consumer resolving the library folds the descriptor for its own
-runtime and renders each token into its link. So the requirements arrive, correct, however deep the library sits in the
-dependency graph - a consuming application never restates them. `Usage` composes per channel with `++`: `libraries`
-(`-l`), `frameworks` (macOS `-framework`), `wholeArchive`, `defines` (a `-D` a consumer's own C must match), `linkFlags`
-(a raw escape), and `multithreaded` (require the consumer to link with multithreading).
+`SNX.flags` carries the non-library requirements per platform: preprocessor `defines` (`-D`) a consumer's own C must set
+to match a library's headers (a NIR `@define` already propagates on its own), raw `linkFlags`, and a `multithreaded`
+requirement (a force-on, not an option - the consumer's resolved configuration must satisfy it). Like `SNX.libraries`,
+these apply to this project's own link and travel in its published descriptor, so they reach downstream consumers.
+
+```scala
+SNX.flags := { case Windows(_, _) => Flags.defines("WIN32") }
+```
 
 ## Publishing
 
@@ -143,8 +181,9 @@ coordinate. A consumer resolves such a dependency with `% NativeClassifier`. Eit
 | `SNX.clang` `.clangPP` | `Option[File]`                              | discovered `clang` / `clang++`    |
 | `SNX.includeDirs` `.libDirs` | `Seq[File]`                           | empty (host paths cross-stripped) |
 | `SNX.modifiers`      | `Seq[Modifier[Native]]`                       | empty                             |
-| `SNX.dependencies`   | `Seq[NativeDependency]`                        | empty                             |
-| `SNX.usage`          | `PartialFunction[NativeRuntime, Usage]`       | empty (exported link requirements)|
+| `SNX.dependencies`   | `Seq[NativeDependency]`                       | empty                             |
+| `SNX.libraries`      | `PartialFunction[NativeRuntime, Seq[NativeLibrary]]` | empty (named native libraries) |
+| `SNX.flags`          | `PartialFunction[NativeRuntime, Flags]`       | empty (defines/linkFlags/MT)      |
 | `SNX.config`         | `Native` (task)                               | resolved configuration            |
 | `SNX.link`           | `File` (task)                                 | links the binary                  |
 | `SNX.classified`     | `Boolean`                                     | `false` (publish per OS/arch)     |
@@ -162,16 +201,16 @@ scalaVersion := "3.8.4"
 organization := "com.example"
 version      := "0.1.0"
 
-// A per-platform NIR library: its bundled C needs a system library, which it declares once via `SNX.usage`. Published
-// per OS/arch as a classified jar that carries the descriptor.
+// A per-platform NIR library: its bundled C needs a system library, which it declares once via `SNX.libraries`.
+// Published per OS/arch as a classified jar that carries the descriptor.
 val core = project
   .enablePlugins(SNXPlugin)
   .settings(
     SNX.classified := true,
-    SNX.usage := {
-      case Linux(_, _)   => Usage.libraries("z")
-      case Darwin(_)     => Usage.frameworks("Security")
-      case Windows(_, _) => Usage.libraries("zlib")
+    SNX.libraries := {
+      case Linux(_, _)   => Seq(NativeLibrary("z"))
+      case Darwin(_)     => Seq(NativeLibrary.framework("Security"))
+      case Windows(_, _) => Seq(NativeLibrary("zlib"))
     }
   )
 

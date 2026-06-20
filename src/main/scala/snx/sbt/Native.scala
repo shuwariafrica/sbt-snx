@@ -25,13 +25,11 @@ import scala.scalanative.build.NativeConfig
 import scala.scalanative.build.Sanitizer
 import scala.scalanative.build.SourceLevelDebuggingConfig
 
-/** The full native build configuration, a C-conventional surface over the Scala Native `NativeConfig`. See
-  * [[Native$ Native]] for the surface; its additive subset is [[Contribution]].
-  */
+/** The native build configuration, over Scala Native's `NativeConfig`. See [[Native$ Native]] for the surface. */
 opaque type Native = NativeConfig
 
-/** Surface for [[Native]]: raw option channels, structured link/compile intents, and the typed scalars, each
-  * returning a new value. The long tail of `NativeConfig` settings is reached through [[update]].
+/** Surface for [[Native]]: the raw option channels, the structured link and compile intents, and the typed scalars,
+  * with [[update]] for anything else.
   */
 object Native:
 
@@ -43,9 +41,10 @@ object Native:
     /** Apply an arbitrary `NativeConfig` transform - the escape hatch for settings without a dedicated verb. */
     def update(transform: NativeConfig => NativeConfig): Native = transform(self)
 
+    /** Append raw options to the link command. */
     def linkOptions(options: String*): Native = self.update(c => c.withLinkingOptions(c.linkingOptions ++ options))
 
-    /** Append options for compiling every native source. */
+    /** Append options for compiling every native source (C and C++). */
     def compileOptions(options: String*): Native = self.update(c => c.withCompileOptions(c.compileOptions ++ options))
 
     /** Append options for compiling C sources. */

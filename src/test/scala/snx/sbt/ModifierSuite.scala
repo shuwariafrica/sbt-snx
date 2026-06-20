@@ -24,7 +24,6 @@ import snx.NativeRuntime
 class ModifierSuite extends munit.FunSuite:
 
   private val glibc = NativeRuntime.Linux(Arch.X86_64, ABI.Glibc)
-  private val musl = NativeRuntime.Linux(Arch.X86_64, ABI.Musl)
   private val darwin = NativeRuntime.Darwin(Arch.Aarch64)
   private val msvc = NativeRuntime.Windows(Arch.X86_64, ABI.Msvc)
   private val mingw = NativeRuntime.Windows(Arch.X86_64, ABI.MinGw)
@@ -40,10 +39,7 @@ class ModifierSuite extends munit.FunSuite:
     assertEquals(Modifier.wholeArchiveName(glibc, "foo"), Seq("-Wl,--whole-archive", "-lfoo", "-Wl,--no-whole-archive"))
     assertEquals(Modifier.wholeArchiveName(darwin, "foo"), Seq.empty[String])
 
-  test("the File whole-archive applies on every platform; the name form skips macOS"):
+  test("the File whole-archive applies on every platform"):
     val byFile = Modifier.wholeArchive(new java.io.File("x.a"))
-    assert(byFile.isDefinedAt(darwin) && byFile.isDefinedAt(glibc) && byFile.isDefinedAt(msvc))
-    val byName = Modifier.wholeArchive("foo")
-    assert(!byName.isDefinedAt(darwin), "the name form has no macOS whole-archive syntax")
-    assert(byName.isDefinedAt(glibc) && byName.isDefinedAt(musl) && byName.isDefinedAt(msvc) && byName.isDefinedAt(mingw))
+    assert(byFile.isDefinedAt(darwin) && byFile.isDefinedAt(glibc) && byFile.isDefinedAt(msvc) && byFile.isDefinedAt(mingw))
 end ModifierSuite

@@ -8,7 +8,7 @@ SNX.linkage := Static
 // A vendored CMake static archive folded into a FULLY-STATIC executable. The scripted excludeFilter gates the
 // `static` leaf to musl or MSVC (the toolchains that link static executables). Proves the collected archive links into
 // a static binary; checkStatic then asserts the binary carries no dynamic dependencies.
-SNX.vendored += Vendored.local("vendor/answer").cmake("answer")
+SNX.libraries += NativeLibrary("answer", Vendored.local("vendor/answer").cmake("answer"))
 
 val checkStatic = taskKey[Unit]("assert the linked executable carries no dynamic dependencies")
 checkStatic := Def.uncached {

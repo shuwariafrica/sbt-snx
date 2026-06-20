@@ -2,7 +2,7 @@ enablePlugins(SNXPlugin)
 
 scalaVersion := "3.8.4"
 
-SNX.vendored += Vendored.local("vendor/answer").cmake("answer")
+SNX.libraries += NativeLibrary("answer", Vendored.local("vendor/answer").cmake("answer"))
 
 // The cmake build directory exists only when the backend actually built (a cache miss). The cached output is the
 // install prefix under the action cache, not this directory, so on a cache hit (build skipped) it is not recreated.

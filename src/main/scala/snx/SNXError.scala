@@ -45,6 +45,9 @@ object SNXError:
   /** A static executable requested on a toolchain that cannot link one - musl or MSVC is required. */
   final case class StaticLinkingUnsupported(message: String) extends SNXError(message)
 
+  /** A native library declared to have no system default that no provisioning supplies. */
+  final case class UnprovisionedLibrary(message: String) extends SNXError(message)
+
   /** An `Executable` deliverable with no main class to link. */
   final case class MissingMainClass(message: String) extends SNXError(message)
 

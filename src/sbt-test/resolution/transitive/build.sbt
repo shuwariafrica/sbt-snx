@@ -6,12 +6,12 @@ scalaVersion := "3.8.4"
 
 val base = project
   .enablePlugins(SNXPlugin)
-  .settings(SNX.usage := { case _ => Usage.libraries("snx_base_absent") })
+  .settings(SNX.libraries := { case _ => Seq(NativeLibrary("snx_base_absent")) })
 
 val middle = project
   .enablePlugins(SNXPlugin)
   .dependsOn(base)
-  .settings(SNX.usage := { case _ => Usage.libraries("snx_middle_absent") })
+  .settings(SNX.libraries := { case _ => Seq(NativeLibrary("snx_middle_absent")) })
 
 val app = project
   .enablePlugins(SNXPlugin)

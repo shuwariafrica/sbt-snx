@@ -1,9 +1,8 @@
-# publish the under-declaring vendor so the producer, consumer, and local project can resolve it
+# publish the under-declaring vendor (no descriptor) so producer and local can resolve it as a managed dependency
 > vendor/publishLocal
-# the producer patches a RUNTIME-scoped vendor dep via .options; the patch propagates into the producer's descriptor
-# (it would be dropped were the export scope Compile-visible)
-> checkPatch
-# the consumer links the producer and folds the propagated patch; the unresolvable library fails the link (completeness)
+# producer declares the library vendor needs but does not; the declaration exports into producer's own descriptor
+> checkExport
+# the consumer resolves producer (and transitively vendor) and folds the propagated requirement; the unresolvable library fails the link
 -> consumer/Compile/snxLink
-# the local project patches vendor for its OWN link; .options folds into that link too, where the unresolvable library fails it
+# local declares the library for its OWN link; the declaration folds into that link, where the unresolvable library fails it
 -> local/Compile/snxLink

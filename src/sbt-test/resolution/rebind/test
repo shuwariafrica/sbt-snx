@@ -1,0 +1,5 @@
+# app provisions both transitively-folded requirements (Unmanaged), so the name-match rebind suppresses their default
+# -l and the link succeeds (it would fail on the unresolvable -l without the rebind)
+> app/Compile/snxLink
+# bare provisions neither, so a transitive default -l<name> is pushed and the link fails on the unresolvable library
+-> bare/Compile/snxLink

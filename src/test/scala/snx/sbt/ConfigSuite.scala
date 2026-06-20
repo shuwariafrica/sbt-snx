@@ -17,6 +17,8 @@
  ****************************************************************/
 package snx.sbt
 
+import sbt.librarymanagement.Configurations
+
 import scala.scalanative.build.NativeConfig
 
 import snx.ABI
@@ -27,7 +29,19 @@ import snx.SNXError
 class ConfigSuite extends munit.FunSuite:
 
   private val glibc = NativeRuntime.Linux(Arch.X86_64, ABI.Glibc)
-  private val darwin = NativeRuntime.Darwin(Arch.Aarch64)
+  private val mainConfigs = Set("compile", "runtime")
+  private val testConfigs = Set("compile", "runtime", "test")
+
+  test("visible scopes a library by its configurations: unscoped is everywhere, `% Test` is the test link only"):
+    val plain = NativeLibrary("z")
+    val testOnly = NativeLibrary("helper") % Configurations.Test
+    val compound = NativeLibrary("both") % "compile,test"
+    assert(SNXPlugin.visible(plain, mainConfigs) && SNXPlugin.visible(plain, testConfigs), "unscoped is visible everywhere")
+    assert(!SNXPlugin.visible(testOnly, mainConfigs), "a `% Test` library is not visible at the main link")
+    assert(SNXPlugin.visible(testOnly, testConfigs), "a `% Test` library is visible at the test link")
+    assert(
+      SNXPlugin.visible(compound, mainConfigs) && SNXPlugin.visible(compound, testConfigs),
+      "a compound config is visible where it names")
 
   test("crossStrip drops the prefixed host search paths only when cross-targeting"):
     val compile = Seq("-I/usr/local/include", "-Qunused-arguments", "-I/opt/include")
@@ -38,21 +52,34 @@ class ConfigSuite extends munit.FunSuite:
     val linking = Seq("-L/usr/local/lib", "-lpthread")
     assertEquals(SNXPlugin.crossStrip(linking, "-L", cross = true), Seq("-lpthread"))
 
-  test("Usage.render renders libraries, defines, whole-archive, and raw flags into a contribution"):
-    val usage = Usage(Seq("pthread"), Nil, Seq("foo"), Seq("USE=1"), Seq("-z,now"), false)
-    val config = Contribution.merge(NativeConfig.empty, Usage.render(usage, glibc))
-    assert(config.linkingOptions.contains("-lpthread"))
-    assert(config.compileOptions.contains("-DUSE=1"))
-    assert(config.linkingOptions.contains("-z,now"))
-    assert(config.linkingOptions.containsSlice(Seq("-Wl,--whole-archive", "-lfoo", "-Wl,--no-whole-archive")))
+  test("ownRequirements maps native libraries to channels by mode and adds the flags residual"):
+    val libraries = Seq(NativeLibrary("a"), NativeLibrary("b").wholeArchive, NativeLibrary.framework("Sec"))
+    assertEquals(
+      SNXPlugin.ownRequirements(libraries, Flags.defines("X") ++ Flags.multithreaded),
+      Usage(Seq("a"), Seq("Sec"), Seq("b"), Seq("X"), Nil, true))
 
-  test("Usage.render emits frameworks only on macOS"):
-    assert(
-      Contribution
-        .merge(NativeConfig.empty, Usage.render(Usage.frameworks("Security"), darwin))
-        .linkingOptions
-        .containsSlice(Seq("-framework", "Security")))
-    assert(!Contribution.merge(NativeConfig.empty, Usage.render(Usage.frameworks("Security"), glibc)).linkingOptions.contains("-framework"))
+  test("requireProvisioned fails a no-system-default library left System-provisioned, accepts a defaulted or provisioned one"):
+    val _ = intercept[SNXError.UnprovisionedLibrary](SNXPlugin.requireProvisioned(Seq(NativeLibrary("foo").noSystemDefault)))
+    SNXPlugin.requireProvisioned(Seq(NativeLibrary("foo")))
+    SNXPlugin.requireProvisioned(Seq(NativeLibrary("foo", Vendored.local("v").cmake("x")).noSystemDefault))
+
+  private val stub: Vendored => Artefacts = _ => Artefacts(Seq(new java.io.File("/x/libfoo.a")), Seq.empty)
+  private def vendored = Provisioning.Vendored(Vendored.local("vendor/foo").cmake("foo"))
+
+  test("the rebind renders an unprovisioned default -l, replaces a vendored name with its archive, keeps link order"):
+    val requirements = Usage(Seq("a", "foo", "b"), Nil, Nil, Nil, Nil, false)
+    val (config, _) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("foo" -> vendored), glibc, stub)
+    assertEquals(config.linkingOptions, Seq("-la", "/x/libfoo.a", "-lb"))
+
+  test("the rebind whole-archives a vendored archive in WholeArchive mode and the platform's linker syntax"):
+    val requirements = Usage(Nil, Nil, Seq("foo"), Nil, Nil, false)
+    val (config, _) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("foo" -> vendored), glibc, stub)
+    assertEquals(config.linkingOptions, Seq("-Wl,--whole-archive", "/x/libfoo.a", "-Wl,--no-whole-archive"))
+
+  test("the rebind suppresses an Unmanaged library's default and renders an unclaimed name's default"):
+    val requirements = Usage(Seq("compiled_in", "sys"), Nil, Nil, Nil, Nil, false)
+    val (config, _) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("compiled_in" -> Provisioning.Unmanaged), glibc, stub)
+    assertEquals(config.linkingOptions, Seq("-lsys"))
 
   test("enforceMultithreading forces multithreading on, leaves it untouched, or fails when the project disabled it"):
     assertEquals(SNXPlugin.enforceMultithreading(NativeConfig.empty, required = true, None).multithreading, Some(true))

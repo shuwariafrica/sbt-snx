@@ -24,25 +24,22 @@ import java.io.File
 
 import snx.NativeRuntime
 
-/** A C/C++ library built from source and folded into the consuming Scala Native link - the source-built counterpart
-  * to [[NativeDependency]] (resolved from a `ModuleID`). Declared through the fluent factories on
-  * [[Vendored$ Vendored]]: an [[Origin]] selects where the source comes from, a backend method how it is built, and
-  * [[options]] the per-platform link contribution it adds.
+/** A C/C++ library built from source and folded into the link. Declared through the factories on [[Vendored$ Vendored]]:
+  * an [[Origin]], a backend, and per-platform [[options]].
   */
 final class Vendored private[sbt] (
   private[sbt] val origin: Origin,
   private[sbt] val backend: Backend,
-  private val modifier: Modifier[Contribution])
+  private val closure: PartialFunction[NativeRuntime, Flags])
     derives CanEqual:
 
-  /** Attach the per-platform link contribution this library adds to the consuming link (libraries, link/compile
-    * options, includes, defines); unmatched platforms contribute nothing. Distinct from a CMake backend's `flags`,
-    * which configure the C build itself.
+  /** Attach this library's per-platform link closure - the transitive `-l`/flags a static archive does not carry.
+    * Distinct from a CMake backend's `flags`, which configure the C build.
     */
-  def options(configure: Modifier[Contribution]): Vendored = new Vendored(origin, backend, configure)
+  def options(closure: PartialFunction[NativeRuntime, Flags]): Vendored = new Vendored(origin, backend, closure)
 
-  private[sbt] def contributionFor(runtime: NativeRuntime): Contribution =
-    modifier.lift(runtime).fold(Contribution.empty)(transform => transform(Contribution.empty))
+  private[sbt] def closureFor(runtime: NativeRuntime): Flags =
+    closure.applyOrElse(runtime, (_: NativeRuntime) => Flags.empty)
 end Vendored
 
 /** Origin factories for [[Vendored]], and the shared content digest used for its cache keys. */
@@ -51,14 +48,12 @@ object Vendored:
   /** Built from a local `directory`, resolved against the project base directory, then the build root. */
   def local(directory: String): Origin = Origin.Local(directory)
 
-  /** Built from a Git repository `uri` cloned at `ref` (a tag, commit, or branch), pinned and cached. A branch is
-    * cloned once and then frozen, so pin a tag or commit for a reproducible build.
+  /** Built from a Git repository `uri` at `ref` (a tag, commit, or branch), pinned and cached; a branch is frozen on
+    * first clone.
     */
   def git(uri: String, ref: String): Origin = Origin.Git(uri, ref)
 
-  /** A stable content identity for a source directory: each file's path (relative to the directory) and content
-    * hash, sorted - so a cache key tracks edits to the sources but not file timestamps or ordering.
-    */
+  /** A stable content identity for a source directory: each file's relative path and content hash, sorted. */
   private[sbt] def contentDigest(directory: File): String =
     val root = directory.toPath.nn
     directory.allPaths
@@ -74,8 +69,8 @@ end Vendored
   */
 sealed trait Origin derives CanEqual:
 
-  /** Build with CMake, building the given `targets` (none builds the default). Static libraries are forced.
-    * Unsupported on the Windows MinGW toolchain, where it fails the build (MSVC is the supported Windows toolchain).
+  /** Build with CMake, building `targets` (none builds the default); static libraries are forced. Unsupported on the
+    * Windows MinGW toolchain.
     */
   def cmake(targets: String*): Vendored = cmake(targets, PartialFunction.empty)
 
@@ -89,11 +84,8 @@ sealed trait Origin derives CanEqual:
   def cmake(targets: Seq[String], flags: PartialFunction[NativeRuntime, Seq[String]], moduleOverrides: File): Vendored =
     new Vendored(this, Backend.CMake(flags, targets, Some(moduleOverrides)), PartialFunction.empty)
 
-  /** Build with a user-supplied `build` function: it produces the [[Artefacts]] from the [[BuildContext]], writing the
-    * archives and header directories under the context's staging directory so they can be cached. `token` keys the
-    * cache (the function cannot be hashed, so change `token` when the build logic changes). The escape hatch for Make,
-    * Autotools, or any toolchain the [[cmake]] backend does not cover; unlike `cmake`, it runs on any toolchain, MinGW
-    * included.
+  /** Build with a user-supplied function from [[BuildContext]] to [[Artefacts]], writing outputs under the context's
+    * staging directory. `token` keys the cache; change it when the build logic changes.
     */
   def command(token: String)(build: BuildContext => Artefacts): Vendored =
     new Vendored(this, Backend.Command(token, build), PartialFunction.empty)

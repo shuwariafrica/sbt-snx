@@ -50,14 +50,11 @@ object SNXImports:
   type Native = snx.sbt.Native
   val Native: snx.sbt.Native.type = snx.sbt.Native
 
-  type Contribution = snx.sbt.Contribution
-  val Contribution: snx.sbt.Contribution.type = snx.sbt.Contribution
-
   type Modifier[A] = snx.sbt.Modifier[A]
   val Modifier: snx.sbt.Modifier.type = snx.sbt.Modifier
 
-  type Usage = snx.sbt.Usage
-  val Usage: snx.sbt.Usage.type = snx.sbt.Usage
+  type Flags = snx.sbt.Flags
+  val Flags: snx.sbt.Flags.type = snx.sbt.Flags
 
   type Deliverable = snx.sbt.Deliverable
   val Deliverable: snx.sbt.Deliverable.type = snx.sbt.Deliverable
@@ -70,6 +67,15 @@ object SNXImports:
 
   type Vendored = snx.sbt.Vendored
   val Vendored: snx.sbt.Vendored.type = snx.sbt.Vendored
+
+  type NativeLibrary = snx.sbt.NativeLibrary
+  val NativeLibrary: snx.sbt.NativeLibrary.type = snx.sbt.NativeLibrary
+
+  type Provisioning = snx.sbt.Provisioning
+  val Provisioning: snx.sbt.Provisioning.type = snx.sbt.Provisioning
+
+  type LinkMode = snx.sbt.LinkMode
+  val LinkMode: snx.sbt.LinkMode.type = snx.sbt.LinkMode
 
   type BuildContext = snx.sbt.BuildContext
 
@@ -102,17 +108,15 @@ object SNXImports:
   val JVMMemoryModelCompliance: scala.scalanative.build.JVMMemoryModelCompliance.type =
     scala.scalanative.build.JVMMemoryModelCompliance
 
-  /** Lift a `ModuleID` into a [[NativeDependency]] (no classifier); the reverse recovers the underlying `ModuleID`.
-    * `% NativeClassifier`, `options`, and the forwarded builders are methods on [[NativeDependency]] - the marker
-    * argument selects this conversion, while a plain `% Test` / `% "config"` resolves through sbt's own path.
-    */
+  /** Lift a `ModuleID` into a [[NativeDependency]]; the reverse recovers the `ModuleID`. */
   given Conversion[ModuleID, NativeDependency] = module => NativeDependency(module, classified = false)
   given Conversion[NativeDependency, ModuleID] = dependency => dependency.module
 
-  /** Add a Scala Native row driven by sbt-snx to a project matrix, for each Scala version. The sbt-snx counterpart of
-    * the matrix's built-in `nativePlatform`, which enables the official Scala Native plugin; this enables
-    * [[SNXPlugin$ SNXPlugin]] on the standard `native` platform axis instead. `settings` or `configure` add per-row
-    * configuration, exactly as `nativePlatform` accepts them.
+  /** Lift an unconditional list of native libraries to the per-platform [[SNXImports.SNX.libraries]] form. */
+  given Conversion[Seq[NativeLibrary], PartialFunction[NativeRuntime, Seq[NativeLibrary]]] = libraries => { case _ => libraries }
+
+  /** Add a Scala Native row driven by sbt-snx to a project matrix - the counterpart of the matrix's built-in
+    * `nativePlatform`, which enables the official Scala Native plugin.
     */
   extension (matrix: ProjectMatrix)
     def snxPlatform(scalaVersions: Seq[String]): ProjectMatrix =
@@ -168,15 +172,11 @@ object SNXImports:
     val clangPP: SettingKey[Option[File]] =
       SettingKey[Option[File]]("snxClangPP", "C++ compiler override (default: discovered clang++).")
 
-    /** Header search directories added to the native compile (`-I`). When [[target]] differs from the build host, the
-      * toolchain's host-discovered header directories are dropped, so a cross build is not contaminated by host paths.
-      */
+    /** Header search directories (`-I`) for the native compile; host-discovered paths are dropped when cross-targeting. */
     val includeDirs: SettingKey[Seq[File]] =
       SettingKey[Seq[File]]("snxIncludeDirs", "Header search directories for the native compile (-I).")
 
-    /** Library search directories added to the native link (`-L`). When [[target]] differs from the build host, the
-      * toolchain's host-discovered library directories are dropped, so a cross build is not contaminated by host paths.
-      */
+    /** Library search directories (`-L`) for the native link; host-discovered paths are dropped when cross-targeting. */
     val libDirs: SettingKey[Seq[File]] =
       SettingKey[Seq[File]]("snxLibDirs", "Library search directories for the native link (-L).")
 
@@ -198,39 +198,31 @@ object SNXImports:
     val multithreading: SettingKey[Option[Boolean]] =
       SettingKey[Option[Boolean]]("snxMultithreading", "Force multithreading on or off (default: Scala Native's auto-detection).")
 
-    /** Per-platform [[Native]] transforms, applied after the scalar settings so a modifier has the final say. */
+    /** Per-platform [[Native]] transforms, applied last. */
     val modifiers: SettingKey[Seq[Modifier[Native]]] =
       SettingKey[Seq[Modifier[Native]]]("snxModifiers", "Per-platform native configuration transforms.")
 
-    /** The resolved native configuration: the discovered toolchain base, the scalar settings, the link requirements
-      * propagated from [[usage]], [[dependencies]], and the resolved classpath's descriptors, then the matched
-      * [[modifiers]].
-      */
+    /** The resolved native configuration. */
     val config: TaskKey[Native] =
       TaskKey[Native]("snxConfig", "Resolved native configuration.")
 
-    /** Managed native dependencies, resolved under the build's OS/arch classifier and folding their per-platform
-      * options into the native configuration. Plain NIR dependencies may stay in `libraryDependencies`.
-      */
+    /** Managed native dependencies, resolved per OS/arch with `% NativeClassifier`. */
     val dependencies: SettingKey[Seq[NativeDependency]] =
-      SettingKey[Seq[NativeDependency]]("snxDependencies", "Managed native dependencies (classified or option-carrying).")
+      SettingKey[Seq[NativeDependency]]("snxDependencies", "Managed native dependencies, classified by OS/arch.")
 
-    /** Native libraries built from source and folded into this configuration's link - `Compile` into the main link,
-      * `Test` into the test link. Config-scoped and purely local: never published and never in the descriptor, so for
-      * a NIR library (which ships its C as source) vendored C belongs only in a `Test` link.
-      */
-    val vendored: SettingKey[Seq[Vendored]] =
-      SettingKey[Seq[Vendored]]("snxVendored", "Native libraries built from source and folded into the link.")
+    /** Per-platform non-library requirements (defines, link flags, multithreading); see [[Flags]]. */
+    val flags: SettingKey[PartialFunction[NativeRuntime, Flags]] =
+      SettingKey[PartialFunction[NativeRuntime, Flags]](
+        "snxFlags",
+        "Per-platform non-library native requirements (defines/linkFlags/multithreading).")
 
-    /** The per-platform link requirements this library exports to consumers, published in its descriptor. A consumer
-      * resolving this library folds the requirements for its own runtime into its own link.
-      */
-    val usage: SettingKey[PartialFunction[NativeRuntime, Usage]] =
-      SettingKey[PartialFunction[NativeRuntime, Usage]]("snxUsage", "Per-platform link requirements exported to consumers.")
+    /** The native libraries the link requires, per platform; each a [[NativeLibrary]]. */
+    val libraries: SettingKey[PartialFunction[NativeRuntime, Seq[NativeLibrary]]] =
+      SettingKey[PartialFunction[NativeRuntime, Seq[NativeLibrary]]](
+        "snxLibraries",
+        "Native C-world libraries the link requires, per platform.")
 
-    /** Whether to publish the native artefact under its OS/arch classifier, for a per-platform NIR library. Defaults
-      * to `false` - a single, platform-independent jar.
-      */
+    /** Whether to publish the native artefact under its OS/arch classifier (default `false`). */
     val classified: SettingKey[Boolean] =
       SettingKey[Boolean]("snxClassified", "Publish under the OS/arch classifier (per-platform NIR; default: false).")
 

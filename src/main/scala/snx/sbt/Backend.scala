@@ -31,10 +31,10 @@ import snx.NativeRuntime
 import snx.NativeRuntime.*
 import snx.SNXError
 
-/** The inputs a [[Backend]] receives to build one [[Vendored]] library: the resolved source directory, a staging
-  * directory for its build outputs, the resolved [[snx.NativeRuntime NativeRuntime]], and the build logger.
+/** The inputs a [[Backend]] receives: the source directory, a staging directory for its outputs, the resolved
+  * [[snx.NativeRuntime NativeRuntime]], the C and C++ compilers, and the build logger.
   */
-final case class BuildContext(source: File, staging: File, runtime: NativeRuntime, log: Logger)
+final case class BuildContext(source: File, staging: File, runtime: NativeRuntime, clang: File, clangPP: File, log: Logger)
 
 /** The outputs of a [[Backend]] build: the static archives to link and the header directories to expose (`-I`). */
 final case class Artefacts(archives: Seq[File], includes: Seq[File]) derives CanEqual
@@ -51,18 +51,14 @@ sealed private[sbt] trait Backend:
   /** Build the source described by `context` and return the archives to link and header directories to expose. */
   def build(context: BuildContext): Artefacts
 
-  /** The backend's contribution to the per-library cache key for `runtime` - its resolved configuration, so a change
-    * of targets, flags, or module overrides invalidates the cached output.
-    */
+  /** The backend's contribution to the per-library cache key for `runtime` - its resolved configuration. */
   def cacheKey(runtime: NativeRuntime): Seq[String]
 
-/** Supported [[Backend]]s and their build mechanics. */
+/** Supported [[Backend]]s. */
 private[sbt] object Backend:
 
-  /** A CMake build: configure (forcing static libraries), build the `targets` (empty builds the default),
-    * `cmake --install` into a staging prefix, then collect the installed archives and headers. `flags` adds
-    * per-platform configure flags - applied after the static-library default, so a `flags` entry may override it;
-    * `moduleOverrides`, when set, is prepended to `CMAKE_MODULE_PATH`.
+  /** A CMake build of `targets` with per-platform configure `flags`, static libraries forced, and an optional
+    * `moduleOverrides` directory prepended to `CMAKE_MODULE_PATH`.
     */
   final case class CMake(flags: PartialFunction[NativeRuntime, Seq[String]], targets: Seq[String], moduleOverrides: Option[File])
       extends Backend:
@@ -117,9 +113,7 @@ private[sbt] object Backend:
       Seq("cmake", targets.mkString(",")) ++ flags.applyOrElse(runtime, (_: NativeRuntime) => Nil) ++ overridesKey
   end CMake
 
-  /** A user-supplied build: `action` produces the [[Artefacts]] from the [[BuildContext]]; `token` keys the cache, as
-    * the function itself cannot be hashed.
-    */
+  /** A user-supplied build: `action` produces the [[Artefacts]]; `token` keys the cache. */
   final case class Command(token: String, action: BuildContext => Artefacts) extends Backend:
     def build(context: BuildContext): Artefacts = action(context)
     def cacheKey(runtime: NativeRuntime): Seq[String] = Seq("command", token)
