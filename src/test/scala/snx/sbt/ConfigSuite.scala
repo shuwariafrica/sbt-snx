@@ -29,6 +29,9 @@ import snx.SNXError
 class ConfigSuite extends munit.FunSuite:
 
   private val glibc = NativeRuntime.Linux(Arch.X86_64, ABI.Glibc)
+  private val darwin = NativeRuntime.Darwin(Arch.Aarch64)
+  private val msvc = NativeRuntime.Windows(Arch.X86_64, ABI.Msvc)
+  private val mingw = NativeRuntime.Windows(Arch.X86_64, ABI.MinGw)
   private val mainConfigs = Set("compile", "runtime")
   private val testConfigs = Set("compile", "runtime", "test")
 
@@ -65,8 +68,12 @@ class ConfigSuite extends munit.FunSuite:
 
   private val archive = new java.io.File("/x/libfoo.a")
   private val archivePath = archive.getAbsolutePath.nn
-  private val stub: Vendored => Artefacts = _ => Artefacts(Seq(archive), Seq.empty)
-  private def vendored = Provisioning.Vendored(Vendored.local("vendor/foo").cmake("foo"))
+  private val shared = new java.io.File("/x/lib/libfoo.so")
+  private val sharedDir = shared.getParentFile.nn.getAbsolutePath.nn
+  // Mirrors a real backend: a Static request yields an archive, a Dynamic one a shared library.
+  private val stub: (Vendored, Linkage) => Artefacts =
+    (_, linkage) => if linkage == Linkage.Static then Artefacts(Seq(archive), Seq.empty) else Artefacts(Seq(shared), Seq.empty)
+  private def vendored = NativeLibrary("foo", Vendored.local("vendor/foo").cmake("foo"))
 
   test("the rebind renders an unprovisioned default -l, replaces a vendored name with its archive, keeps link order"):
     val requirements = Usage(Seq("a", "foo", "b"), Nil, Nil, Nil, Nil, false)
@@ -80,8 +87,58 @@ class ConfigSuite extends munit.FunSuite:
 
   test("the rebind suppresses an Unmanaged library's default and renders an unclaimed name's default"):
     val requirements = Usage(Seq("compiled_in", "sys"), Nil, Nil, Nil, Nil, false)
-    val (config, _) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("compiled_in" -> Provisioning.Unmanaged), glibc, stub)
+    val library = NativeLibrary("compiled_in", Provisioning.Unmanaged)
+    val (config, _) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("compiled_in" -> library), glibc, stub)
     assertEquals(config.linkingOptions, Seq("-lsys"))
+
+  test("provisioningDefault derives the linkage a provisioning defaults to: System dynamic, Vendored static"):
+    assertEquals(SNXPlugin.provisioningDefault(Provisioning.System), Linkage.Dynamic)
+    assertEquals(SNXPlugin.provisioningDefault(Provisioning.Vendored(Vendored.local("v").cmake("x"))), Linkage.Static)
+
+  test("the rebind brackets a static system library with -Bstatic on GNU, keeping the libc default dynamic"):
+    val requirements = Usage(Seq("z"), Nil, Nil, Nil, Nil, false)
+    val library = NativeLibrary("z").linkage { case _ => Linkage.Static }
+    val (config, _) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("z" -> library), glibc, stub)
+    assertEquals(config.linkingOptions, Seq("-Wl,-Bstatic", "-lz", "-Wl,-Bdynamic"))
+
+  test("a per-platform library linkage brackets where it matches static and falls to the provisioning default elsewhere"):
+    val requirements = Usage(Seq("z"), Nil, Nil, Nil, Nil, false)
+    val library = NativeLibrary("z").linkage { case NativeRuntime.Linux(_, _) => Linkage.Static }
+    val (onGlibc, _) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("z" -> library), glibc, stub)
+    assertEquals(onGlibc.linkingOptions, Seq("-Wl,-Bstatic", "-lz", "-Wl,-Bdynamic"), "Linux matched: static bracket")
+    val (onDarwin, _) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("z" -> library), darwin, stub)
+    assertEquals(onDarwin.linkingOptions, Seq("-lz"), "Darwin unmatched: falls to the System dynamic default")
+
+  test("systemLink renders the per-platform static form: GNU brackets, MinGW brackets, MSVC names the lib, macOS fails"):
+    assertEquals(SNXPlugin.systemLink(glibc, LinkMode.Plain, Linkage.Static, "z"), Seq("-Wl,-Bstatic", "-lz", "-Wl,-Bdynamic"))
+    assertEquals(SNXPlugin.systemLink(mingw, LinkMode.Plain, Linkage.Static, "z"), Seq("-Wl,-Bstatic", "-lz", "-Wl,-Bdynamic"))
+    assertEquals(SNXPlugin.systemLink(msvc, LinkMode.Plain, Linkage.Static, "z"), Seq("-lz"))
+    intercept[SNXError.UnsupportedLinkage](SNXPlugin.systemLink(darwin, LinkMode.Plain, Linkage.Static, "z"))
+
+  test("a static whole-archive system library brackets the whole-archive inside -Bstatic on GNU"):
+    assertEquals(
+      SNXPlugin.systemLink(glibc, LinkMode.WholeArchive, Linkage.Static, "foo"),
+      Seq("-Wl,-Bstatic", "-Wl,--whole-archive", "-lfoo", "-Wl,--no-whole-archive", "-Wl,-Bdynamic")
+    )
+
+  test("a static macOS framework fails fast - a framework cannot be linked statically"):
+    val _ = intercept[SNXError.UnsupportedLinkage](SNXPlugin.systemLink(glibc, LinkMode.Framework, Linkage.Static, "Accelerate"))
+
+  test("a dynamically-linked vendored library renders like a system dynamic link plus its build search path"):
+    val requirements = Usage(Seq("foo"), Nil, Nil, Nil, Nil, false)
+    val dynamicVendored = vendored.linkage { case _ => Linkage.Dynamic }
+    val (config, _) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("foo" -> dynamicVendored), glibc, stub)
+    assertEquals(config.linkingOptions, Seq("-lfoo", "-L" + sharedDir, "-Wl,-rpath," + sharedDir))
+
+  test("a whole-archive vendored library cannot be linked dynamically - whole-archive is a static-archive operation"):
+    val requirements = Usage(Nil, Nil, Seq("foo"), Nil, Nil, false)
+    val library = vendored.wholeArchive.linkage { case _ => Linkage.Dynamic }
+    intercept[SNXError.UnsupportedLinkage](SNXPlugin.rebind(NativeConfig.empty, requirements, Map("foo" -> library), glibc, stub))
+
+  test("a dynamically-linked vendored library on Windows fails fast - DLL redistribution is a follow-on"):
+    val requirements = Usage(Seq("foo"), Nil, Nil, Nil, Nil, false)
+    val dynamicVendored = vendored.linkage { case _ => Linkage.Dynamic }
+    intercept[SNXError.UnsupportedLinkage](SNXPlugin.rebind(NativeConfig.empty, requirements, Map("foo" -> dynamicVendored), msvc, stub))
 
   test("enforceMultithreading forces multithreading on, leaves it untouched, or fails when the project disabled it"):
     assertEquals(SNXPlugin.enforceMultithreading(NativeConfig.empty, required = true, None).multithreading, Some(true))

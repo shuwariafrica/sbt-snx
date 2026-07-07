@@ -45,8 +45,15 @@ unsupported operating system, architecture, or toolchain ABI fails the build wit
 
 A project produces one `SNX.deliverable`: `NIR` (the default - a platform-independent jar that a downstream Scala
 Native build resolves and links), a native `Library` (a `.so`/`.dylib`/`.dll`, or a `.a`/`.lib` when linked
-statically), or an `Executable`. `SNX.linkage` selects `Static` or `Dynamic` linking per platform (default `Dynamic`);
-a static `Executable` is supported only where the toolchain allows it (musl or MSVC) and fails fast elsewhere.
+statically), or an `Executable`.
+
+Own code is always compiled into the binary, so linkage is about the **C runtime** and each **C library**. `SNX.linkage`
+is the deliverable's C-runtime linkage per platform (default `Dynamic`): `Static` renders musl `-static` or MSVC `/MT`
+(`-fms-runtime-lib=static`), and a fully static executable (libc included) is supported only on musl or MSVC - glibc and
+macOS cannot static-link libc and fail fast. `Test / SNX.linkage` drives the always-application test binary
+independently (default `Dynamic`), so a static deliverable never forces its test into a gated static link; a `Library`
+or `NIR` project can still opt its own test binary into `Static` where the platform supports it. Per-library static
+linking (a static C library alongside a dynamic libc) is a `NativeLibrary` concern, below.
 
 `SNX.link` links the binary for the enclosing configuration. `run` runs it, forwarding arguments and `run / envVars`;
 `test` runs the project's test frameworks as a native binary (it requires `Test / fork := false`). `run`, `runMain`,
@@ -115,6 +122,25 @@ registrations); `NativeLibrary.framework(name)` is a macOS framework, contributi
 `.noSystemDefault` that no provisioning supplies fails the build with a directed message rather than an unresolved
 `-l<name>` at link time.
 
+`.linkage` sets how a library is linked, per platform - a decision independent of its provisioning. Unset, a library
+follows its provisioning's default (System dynamic, Vendored static); a bare `Static`/`Dynamic` lifts to a constant, as
+on `SNX.linkage`. A static system library links via the platform's bracket (GNU `-Wl,-Bstatic -l<name> -Wl,-Bdynamic`,
+keeping libc dynamic; MSVC names the static `.lib`) - so `SNX.linkage := Dynamic` with libraries linked `Static` is a
+maximal-static build (own code and each library static, libc dynamic) that works on glibc, where a fully static
+executable does not. It needs the library's static archive present (installed, or provisioned `Vendored`, which builds
+one).
+
+```scala
+SNX.linkage   := Dynamic // the C runtime stays dynamic
+SNX.libraries += NativeLibrary("z").linkage { case Linux(_, _) | Windows(_, _) => Static } // macOS falls to dynamic
+```
+
+Forcing a static link the platform cannot provide - a macOS system library with no static archive, or a statically-linked
+framework - fails fast. A `Vendored` library links static or dynamic exactly as a `System` one: the provisioning only
+builds the artefact the linkage needs - a static archive, or a shared library the dynamic link references (`-l<name>
+-L<builtdir>`) and the target supplies at runtime. A whole-archive library cannot be linked dynamically (whole-archive
+is a static-archive operation), and a dynamically-linked vendored library on Windows (DLL redistribution) is a follow-on.
+
 A library carries the configurations it applies to in its own definition, like a managed dependency: `NativeLibrary("z")
 % Test` scopes it to the test link (it folds into the test binary's link and does not export), while a library with no
 configuration applies to every link and exports.
@@ -133,13 +159,18 @@ SNX.libraries += NativeLibrary(
 
 `local(directory)` builds a directory under the project (resolved against the project, then the build root);
 `git(uri, ref)` clones a Git repository at a `ref` (a tag, commit, or branch; a branch is frozen on first clone, so
-pin a tag or commit for a reproducible build). `cmake` configures, builds,
-installs, and collects the static archives and headers, forcing static libraries (`-DBUILD_SHARED_LIBS=OFF`);
-per-platform configure flags pass as `cmake(targets, flags)`. `options` adds the library's per-platform link closure -
+pin a tag or commit for a reproducible build). `cmake` configures, builds, installs, and collects **every** library and
+header under the install prefix - not only the `targets` you name, but whatever the project's `install()` rules emit, so
+a multi-library project (aws-lc installs both `libssl` and `libcrypto`) contributes them all; scope the project's install
+(or its `targets`) to what you need. It builds them static or shared per the library's `.linkage` (`BUILD_SHARED_LIBS` is
+derived - a static archive by default, a shared library under `.linkage(Dynamic)`), and per-platform configure flags pass
+as `cmake(targets, flags)`. `options` adds the library's per-platform link closure -
 the transitive `-l`/flags/defines a static archive cannot carry itself - applied at this provisioning site and never
 published (distinct from the CMake configure `flags`). The build runs in a normal toolchain environment, so a
-CMakeLists using `find_package` or a toolchain file behaves as it does standalone. Builds are cached locally and rerun
-only when the sources, configuration, or toolchain change.
+CMakeLists using `find_package` or a toolchain file behaves as it does standalone. Builds are cached locally, keyed on
+the source (a `local` directory's content hash, or a `git` origin's `uri@ref` string - not the fetched content, so a
+moving branch or force-moved tag is not picked up: pin a stable commit or tag), the configuration, and the resolved
+toolchain.
 
 The CMake backend builds with CMake's default toolchain, which matches the Scala Native link on Linux, macOS, and the
 MSVC Windows toolchain. It is not supported on Windows MinGW - MSVC is the supported Windows toolchain - so a vendored
@@ -149,6 +180,15 @@ For a build CMake does not cover - Make, Autotools, a hand-rolled script - `comm
 escape hatch: the function builds from `ctx.source` into `ctx.staging` and returns the archives and header directories
 to fold in (an `Artefacts`, whose paths must lie under `ctx.staging` so they are cached); `token` keys the build cache.
 `command` allows use of any toolchain - MinGW included.
+
+### Caching vendored builds in CI
+
+A vendored build is cached locally only (`CacheLevelTag.Local`) - a compiled archive is not portable across toolchains,
+so it is never shared through a remote cache. A fresh CI runner therefore rebuilds each vendored library from source
+unless you persist the sbt local cache store (the `SBT_LOCAL_CACHE` directory, for example `~/.cache/sbt`) between runs.
+Doing so turns an expensive source build - an aws-lc or similar - from minutes per matrix cell into seconds, and it is
+safe: the cache key includes the resolved toolchain (the compilers and their versions, and `cmake`), so a runner-image
+or compiler change misses and rebuilds rather than reusing a stale archive.
 
 ## Other link requirements
 

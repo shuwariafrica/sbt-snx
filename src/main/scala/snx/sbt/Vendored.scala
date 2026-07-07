@@ -69,8 +69,8 @@ end Vendored
   */
 sealed trait Origin derives CanEqual:
 
-  /** Build with CMake, building `targets` (none builds the default); static libraries are forced. Unsupported on the
-    * Windows MinGW toolchain.
+  /** Build with CMake, building `targets` (none builds the default); the library is built static or shared per its
+    * resolved per-library [[Linkage]]. Unsupported on the Windows MinGW toolchain.
     */
   def cmake(targets: String*): Vendored = cmake(targets, PartialFunction.empty)
 
@@ -85,7 +85,8 @@ sealed trait Origin derives CanEqual:
     new Vendored(this, Backend.CMake(flags, targets, Some(moduleOverrides)), PartialFunction.empty)
 
   /** Build with a user-supplied function from [[BuildContext]] to [[Artefacts]], writing outputs under the context's
-    * staging directory. `token` keys the cache; change it when the build logic changes.
+    * staging directory and honouring its [[Linkage]] (an archive for `Static`, a shared library for `Dynamic`).
+    * `token` keys the cache; change it when the build logic changes.
     */
   def command(token: String)(build: BuildContext => Artefacts): Vendored =
     new Vendored(this, Backend.Command(token, build), PartialFunction.empty)

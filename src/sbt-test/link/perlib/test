@@ -1,0 +1,7 @@
+# A system-provisioned NativeLibrary forced static with `.linkage(Static)` links via the -Wl,-Bstatic -l<name>
+# -Wl,-Bdynamic bracket against a self-built archive, while SNX.linkage := Dynamic keeps libc dynamic - the maximal-static glibc
+# build. `run` links the bracket and resolves the archive's symbol (prints 42); `checkDynamicLibc` confirms libc is
+# still dynamically linked (the -Bdynamic restored dynamic mode after the static bracket). Linux-only (GNU -Bstatic).
+> buildArchive
+> run
+> checkDynamicLibc

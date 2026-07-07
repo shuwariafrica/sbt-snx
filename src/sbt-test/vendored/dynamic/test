@@ -1,0 +1,8 @@
+# A vendored CMake library linked DYNAMICALLY into the executable (Linux-only; the excludeFilter gates `dynamic` off
+# non-Linux). `run` links and runs the main binary - finding the built libanswer.so at runtime through the -rpath the
+# plugin adds - and verifies the answer. `test` then proves the SAME unscoped vendored library folds into the test link
+# and its TestAdapter-launched binary also resolves libanswer.so (the vendored cache key omits the configuration, so the
+# test link reuses the main build's shared library + rpath). checkDynamic asserts ldd reports the dynamic dependency.
+> run
+> test
+> checkDynamic

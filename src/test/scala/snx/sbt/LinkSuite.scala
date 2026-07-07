@@ -18,17 +18,20 @@
 package snx.sbt
 
 import scala.scalanative.build.BuildTarget
+import scala.scalanative.build.NativeConfig
 
 import snx.ABI
 import snx.Arch
 import snx.NativeRuntime
 import snx.SNXError
+import snx.TargetPlatform
 
 class LinkSuite extends munit.FunSuite:
 
   private val glibc = NativeRuntime.Linux(Arch.X86_64, ABI.Glibc)
   private val musl = NativeRuntime.Linux(Arch.X86_64, ABI.Musl)
   private val darwin = NativeRuntime.Darwin(Arch.Aarch64)
+  private val msvc = NativeRuntime.Windows(Arch.X86_64, ABI.Msvc)
 
   test("the NIR deliverable is not linked"):
     intercept[SNXError.NotLinkable](SNXPlugin.resolveTarget(Deliverable.NIR, Linkage.Dynamic, glibc, Some("Main")))
@@ -57,23 +60,34 @@ class LinkSuite extends munit.FunSuite:
     val (dynamicLib, _, _) = SNXPlugin.resolveTarget(Deliverable.Library, Linkage.Dynamic, darwin, None)
     assert(dynamicLib == BuildTarget.libraryDynamic)
 
-  test("a Library deliverable's test links as a dynamic application regardless of test linkage"):
-    val (target, static) = SNXPlugin.resolveTestTarget(Deliverable.Library, Linkage.Static, musl)
-    assert(target == BuildTarget.application)
-    assertEquals(static, false)
-
-  test("a NIR deliverable's test links as a dynamic application"):
-    val (target, static) = SNXPlugin.resolveTestTarget(Deliverable.NIR, Linkage.Static, musl)
-    assert(target == BuildTarget.application)
-    assertEquals(static, false)
-
-  test("an Executable deliverable's test honours a static test linkage where supported"):
-    val (target, static) = SNXPlugin.resolveTestTarget(Deliverable.Executable, Linkage.Static, musl)
+  test("the test binary links as an application, honouring a static test linkage where the platform supports it"):
+    val (target, static) = SNXPlugin.resolveTestTarget(Linkage.Static, musl)
     assert(target == BuildTarget.application)
     assertEquals(static, true)
 
-  test("an Executable deliverable's test links dynamically under dynamic test linkage"):
-    val (target, static) = SNXPlugin.resolveTestTarget(Deliverable.Executable, Linkage.Dynamic, glibc)
+  test("the test binary links dynamically under dynamic test linkage"):
+    val (target, static) = SNXPlugin.resolveTestTarget(Linkage.Dynamic, glibc)
     assert(target == BuildTarget.application)
     assertEquals(static, false)
+
+  test("a static test binary is rejected where the platform cannot link statically"):
+    intercept[SNXError.StaticLinkingUnsupported](SNXPlugin.resolveTestTarget(Linkage.Static, glibc))
+
+  test("cRuntimeStatic renders the C-runtime static flag per platform - musl link-only, MSVC compile and link"):
+    val base = NativeConfig.empty
+    val muslStatic = Contribution.merge(base, SNXPlugin.cRuntimeStatic(musl))
+    assertEquals(muslStatic.linkingOptions, base.linkingOptions :+ "-static")
+    assertEquals(muslStatic.compileOptions, base.compileOptions)
+    val msvcStatic = Contribution.merge(base, SNXPlugin.cRuntimeStatic(msvc))
+    assertEquals(msvcStatic.linkingOptions, base.linkingOptions :+ "-fms-runtime-lib=static")
+    assertEquals(msvcStatic.compileOptions, base.compileOptions :+ "-fms-runtime-lib=static")
+
+  test("cRuntimeStatic contributes exactly for the runtimes that support static linking"):
+    val base = NativeConfig.empty
+    TargetPlatform.all
+      .flatMap(NativeRuntime.variants)
+      .foreach: runtime =>
+        val merged = Contribution.merge(base, SNXPlugin.cRuntimeStatic(runtime))
+        val contributes = merged.linkingOptions != base.linkingOptions || merged.compileOptions != base.compileOptions
+        assertEquals(contributes, runtime.supportsStaticLinking, s"cRuntimeStatic disagrees with supportsStaticLinking for $runtime")
 end LinkSuite
