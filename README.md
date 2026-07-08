@@ -43,17 +43,23 @@ unsupported operating system, architecture, or toolchain ABI fails the build wit
 
 ## Deliverables, linkage, and the build
 
-A project produces one `SNX.deliverable`: `NIR` (the default - a platform-independent jar that a downstream Scala
-Native build resolves and links), a native `Library` (a `.so`/`.dylib`/`.dll`, or a `.a`/`.lib` when linked
-statically), or an `Executable`.
+A project produces one `SNX.deliverable`, and that choice fully describes the artefact: `NIR` (the default - a
+platform-independent jar that a downstream Scala Native build resolves and links), `Library.Static` (a `.a`/`.lib`
+archive), `Library.Shared` (a `.so`/`.dylib`/`.dll`), or `Executable`.
 
-Own code is always compiled into the binary, so linkage is about the **C runtime** and each **C library**. `SNX.linkage`
-is the deliverable's C-runtime linkage per platform (default `Dynamic`): `Static` renders musl `-static` or MSVC `/MT`
-(`-fms-runtime-lib=static`), and a fully static executable (libc included) is supported only on musl or MSVC - glibc and
-macOS cannot static-link libc and fail fast. `Test / SNX.linkage` drives the always-application test binary
-independently (default `Dynamic`), so a static deliverable never forces its test into a gated static link; a `Library`
-or `NIR` project can still opt its own test binary into `Static` where the platform supports it. Per-library static
-linking (a static C library alongside a dynamic libc) is a `NativeLibrary` concern, below.
+Own code is always compiled into the binary, so "linkage" is not one deliverable-wide setting but two orthogonal
+concerns: how each **C library** binds (`NativeLibrary.linkage`, below), and whether the **C runtime** links
+statically. The latter is an explicit opt-in - add the `SNX.staticRuntime` modifier to the final binary you want it on:
+
+```scala
+SNX.modifiers      += SNX.staticRuntime // the deliverable (an Executable, or a Library.Shared)
+Test / SNX.modifiers += SNX.staticRuntime // the always-application test binary only, leaving the deliverable untouched
+```
+
+It renders `-static` on musl (a fully static binary, libc and all) and `/MT` (`-fms-runtime-lib=static`) on MSVC (a
+static CRT; the Win32 system DLLs stay dynamic, since Windows has no fully-static form). It fails fast on glibc, macOS,
+and MinGW, which cannot link a static C runtime. Per-library static linking (a static C library alongside a dynamic
+libc) is a separate `NativeLibrary` concern, below.
 
 `SNX.link` links the binary for the enclosing configuration. `run` runs it, forwarding arguments and `run / envVars`;
 `test` runs the project's test frameworks as a native binary (it requires `Test / fork := false`). `run`, `runMain`,
@@ -123,15 +129,13 @@ registrations); `NativeLibrary.framework(name)` is a macOS framework, contributi
 `-l<name>` at link time.
 
 `.linkage` sets how a library is linked, per platform - a decision independent of its provisioning. Unset, a library
-follows its provisioning's default (System dynamic, Vendored static); a bare `Static`/`Dynamic` lifts to a constant, as
-on `SNX.linkage`. A static system library links via the platform's bracket (GNU `-Wl,-Bstatic -l<name> -Wl,-Bdynamic`,
-keeping libc dynamic; MSVC names the static `.lib`) - so `SNX.linkage := Dynamic` with libraries linked `Static` is a
-maximal-static build (own code and each library static, libc dynamic) that works on glibc, where a fully static
-executable does not. It needs the library's static archive present (installed, or provisioned `Vendored`, which builds
-one).
+follows its provisioning's default (System dynamic, Vendored static); a bare `Static`/`Dynamic` lifts to a constant. A
+static system library links via the platform's bracket (GNU `-Wl,-Bstatic -l<name> -Wl,-Bdynamic`, keeping libc dynamic;
+MSVC names the static `.lib`) - so a dynamic deliverable with libraries linked `Static` is a maximal-static build (own
+code and each library static, libc dynamic) that works on glibc, where a fully static executable does not. It needs the
+library's static archive present (installed, or provisioned `Vendored`, which builds one).
 
 ```scala
-SNX.linkage   := Dynamic // the C runtime stays dynamic
 SNX.libraries += NativeLibrary("z").linkage { case Linux(_, _) | Windows(_, _) => Static } // macOS falls to dynamic
 ```
 
@@ -216,7 +220,6 @@ coordinate. A consumer resolves such a dependency with `% NativeClassifier`. Eit
 | `SNX.target`         | `TargetPlatform`                              | the build host                    |
 | `SNX.runtime`        | `NativeRuntime` (task)                        | resolved from target + toolchain  |
 | `SNX.deliverable`    | `Deliverable`                                 | `NIR`                             |
-| `SNX.linkage`        | `PartialFunction[NativeRuntime, Linkage]`     | `Dynamic`                         |
 | `SNX.mode` `.gc` `.lto` `.optimize` `.sanitizer` `.multithreading` | scalars             | Scala Native's defaults           |
 | `SNX.clang` `.clangPP` | `Option[File]`                              | discovered `clang` / `clang++`    |
 | `SNX.includeDirs` `.libDirs` | `Seq[File]`                           | empty (host paths cross-stripped) |
@@ -254,14 +257,11 @@ val core = project
     }
   )
 
-// A native library (.so/.dylib/.dll), linked statically where the toolchain supports it.
+// A native library, emitted as a shared object (.so/.dylib/.dll); use Library.Static for a .a/.lib archive instead.
 val engine = project
   .enablePlugins(SNXPlugin)
   .dependsOn(core)
-  .settings(
-    SNX.deliverable := Library,
-    SNX.linkage     := { case p if p.supportsStaticLinking => Static; case _ => Dynamic }
-  )
+  .settings(SNX.deliverable := Library.Shared)
 
 // The application, with a per-platform tweak. It consumes both modules and never restates core's link requirements:
 // core's descriptor propagates them into this link automatically.

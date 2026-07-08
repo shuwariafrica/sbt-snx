@@ -5,7 +5,7 @@ enablePlugins(SNXPlugin)
 
 scalaVersion := "3.8.4"
 
-SNX.deliverable := Library
+SNX.deliverable := Library.Shared
 
 val testC = taskKey[Unit]("compile and run a C driver against the linked native library")
 testC := {

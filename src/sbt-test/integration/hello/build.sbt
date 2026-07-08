@@ -21,7 +21,7 @@ val core = project
 val engine = project
   .enablePlugins(SNXPlugin)
   .dependsOn(core)
-  .settings(SNX.deliverable := Library)
+  .settings(SNX.deliverable := Library.Shared)
 
 val app = project
   .enablePlugins(SNXPlugin)

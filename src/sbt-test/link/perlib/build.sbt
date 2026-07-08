@@ -7,9 +7,8 @@ scalaVersion := "3.8.4"
 
 SNX.deliverable := Executable
 
-// The C runtime (libc) stays dynamic; only the named library below is forced static - the maximal-static glibc build
-// (own code + a static syslib + a dynamic libc).
-SNX.linkage := Dynamic
+// The deliverable links dynamically (the default), so the C runtime (libc) stays dynamic; only the named library below
+// is forced static - the maximal-static glibc build (own code + a static syslib + a dynamic libc).
 
 // A static archive built in-fixture (it ships no shared variant), linked static via the per-library
 // -Wl,-Bstatic -l<name> -Wl,-Bdynamic bracket. `-L` points the linker at the built archive.
@@ -48,6 +47,6 @@ checkDynamicLibc := {
   val ldd = Process(Seq("sh", "-c", s"ldd '${binary.getAbsolutePath}' 2>&1 || true")).!!.toLowerCase
   assert(
     !(ldd.contains("not a dynamic executable") || ldd.contains("statically linked")),
-    s"the binary is fully static; SNX.linkage := Dynamic should keep libc dynamic:\n$ldd")
+    s"the binary is fully static; the dynamic deliverable should keep libc dynamic:\n$ldd")
   streams.value.log.info(s"snx link/perlib: static archive linked via the -Bstatic bracket, libc still dynamic:\n$ldd")
 }

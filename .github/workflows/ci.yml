@@ -1,4 +1,4 @@
-name: CI
+name: build
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ env:
 
 jobs:
   tests:
-    name: "[${{ matrix.os }}${{ matrix.env && format(' ({0})', matrix.env) || '' }}: ${{ matrix.arch }}] Tests"
+    name: "[${{ matrix.os }}-${{ matrix.arch }}${{ matrix.env && format('-{0}', matrix.env) || '' }}] Tests"
     strategy:
       fail-fast: false
       matrix:

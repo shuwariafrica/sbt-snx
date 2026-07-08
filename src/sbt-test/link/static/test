@@ -1,5 +1,6 @@
-# A static executable links and runs where the platform supports it (musl or MSVC); this fixture is gated to those
-# cells by the scripted excludeFilter. On Linux the binary is asserted to carry no dynamic dependencies. The
-# fail-fast on unsupported platforms is covered by LinkSuite.
+# A static executable links and runs where the platform supports it (musl or MSVC); the scripted excludeFilter gates
+# this fixture to those cells. checkStatic asserts the platform-appropriate result: a fully-static binary on musl (ldd
+# reports nothing), or a static C runtime on MSVC (dumpbin shows no CRT DLL import). The fail-fast on unsupported
+# platforms (glibc, macOS) is covered by LinkSuite.
 > run
 > checkStatic

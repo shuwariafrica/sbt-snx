@@ -138,11 +138,6 @@ object SNXPlugin extends AutoPlugin:
       SNX.includeDirs := Seq.empty,
       SNX.libDirs := Seq.empty,
       SNX.deliverable := Deliverable.NIR,
-      SNX.linkage := { case _ => Linkage.Dynamic },
-      // The test binary's linkage defaults dynamic independently of the deliverable's (kept at the unscoped base above,
-      // which the main link reaches by config delegation), so a static deliverable never couples its test into a gated
-      // static link. A test-only static binary is opt-in via `Test / SNX.linkage`.
-      Test / SNX.linkage := { case _ => Linkage.Dynamic },
       SNX.mode := Mode.default,
       SNX.gc := GC.default,
       SNX.lto := LTO.default,
@@ -427,18 +422,13 @@ object SNXPlugin extends AutoPlugin:
   private def linkTask(testConfig: Boolean): Def.Initialize[Task[File]] =
     Def
       .uncachedTask {
-        val runtime = SNX.runtime.value
-        val linkage = SNX.linkage.value.applyOrElse(runtime, (_: NativeRuntime) => Linkage.Dynamic)
-        val (buildTarget, static, mainClass) =
-          if testConfig then
-            val (target, statically) = resolveTestTarget(linkage, runtime)
-            (target, statically, Some(testMain))
-          else resolveTarget(SNX.deliverable.value, linkage, runtime, selectMainClass.value)
+        val (buildTarget, mainClass) =
+          if testConfig then (BuildTarget.application, Some(testMain))
+          else resolveTarget(SNX.deliverable.value, selectMainClass.value)
         val converter = fileConverter.value
         val entries = if testConfig then fullClasspath.value else (Runtime / fullClasspath).value
         val classpath = entries.map(entry => converter.toPath(entry.data))
-        val base = SNX.config.value.config.withBuildTarget(buildTarget)
-        val compilerConfig = if static then Contribution.merge(base, cRuntimeStatic(runtime)) else base
+        val compilerConfig = SNX.config.value.config.withBuildTarget(buildTarget)
         val config = Config.empty
           .withLogger(nativeLogger(streams.value.log))
           .withClassPath(classpath)
@@ -513,44 +503,20 @@ object SNXPlugin extends AutoPlugin:
       (message: String) => log.error(message)
     )
 
-  /** Resolve a deliverable, linkage, and main class into the build target, static flag, and main class. Fails fast for
-    * an unlinked `NIR`, a missing `Executable` main class, or unsupported static linking.
+  /** Resolve a deliverable and main class into the build target and main class. Fails fast for an unlinked `NIR` or a
+    * missing `Executable` main class. The build target follows the deliverable alone - a `Library.Static` archives, a
+    * `Library.Shared` links a shared object, an `Executable` links an application; the static C runtime is a separate
+    * opt-in ([[SNXImports.SNX.staticRuntime]]), and the test binary is always an application.
     */
-  private[sbt] def resolveTarget(
-    deliverable: Deliverable,
-    linkage: Linkage,
-    runtime: NativeRuntime,
-    main: Option[String]): (BuildTarget, Boolean, Option[String]) =
+  private[sbt] def resolveTarget(deliverable: Deliverable, main: Option[String]): (BuildTarget, Option[String]) =
     deliverable match
       case Deliverable.NIR =>
         fail(SNXError.NotLinkable("the NIR deliverable is published as a jar, not linked"))
-      case Deliverable.Library =>
-        val buildTarget = if linkage == Linkage.Static then BuildTarget.libraryStatic else BuildTarget.libraryDynamic
-        (buildTarget, false, None)
-      case Deliverable.Executable =>
+      case Deliverable.Library.Static => (BuildTarget.libraryStatic, None)
+      case Deliverable.Library.Shared => (BuildTarget.libraryDynamic, None)
+      case Deliverable.Executable     =>
         if main.isEmpty then fail(SNXError.MissingMainClass("an Executable deliverable requires a main class"))
-        else if linkage == Linkage.Static && !runtime.supportsStaticLinking then
-          fail(SNXError.StaticLinkingUnsupported(s"static executable linking is not supported on $runtime (requires musl or MSVC)"))
-        else (BuildTarget.application, linkage == Linkage.Static, main)
-
-  /** Resolve the test binary's target: `TestMain` as an application, static per the `Test`-scoped linkage (gated to a
-    * static-capable platform). Honoured for every deliverable - the test binary is always an application, and its
-    * default `Test / SNX.linkage := Dynamic` keeps a static deliverable from coupling its test into a gated link.
-    */
-  private[sbt] def resolveTestTarget(linkage: Linkage, runtime: NativeRuntime): (BuildTarget, Boolean) =
-    val (buildTarget, static, _) = resolveTarget(Deliverable.Executable, linkage, runtime, Some(testMain))
-    (buildTarget, static)
-
-  /** The C-runtime static contribution for `runtime`, rendered per platform: musl `-static` (link only); MSVC
-    * `-fms-runtime-lib=static` (`/MT` -> `LIBCMT`, compile and link, so every object agrees on the CRT). Only reached
-    * for a static-capable runtime (`supportsStaticLinking`); the others contribute nothing.
-    */
-  private[sbt] def cRuntimeStatic(runtime: NativeRuntime): Contribution = runtime match
-    case NativeRuntime.Linux(_, ABI.Musl)   => Contribution.empty.linkOptions("-static")
-    case NativeRuntime.Windows(_, ABI.Msvc) =>
-      Contribution.empty.compileOptions("-fms-runtime-lib=static").linkOptions("-fms-runtime-lib=static")
-    case NativeRuntime.Linux(_, ABI.Glibc) | NativeRuntime.Darwin(_) | NativeRuntime.Windows(_, ABI.MinGw) =>
-      Contribution.empty
+        else (BuildTarget.application, main)
 
   /** Derive the resolved `ModuleID`: a classified dependency resolves under the target's OS/arch classifier. */
   private[sbt] def derive(target: TargetPlatform, dependency: NativeDependency): ModuleID =

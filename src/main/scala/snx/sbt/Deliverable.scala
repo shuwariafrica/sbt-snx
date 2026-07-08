@@ -17,8 +17,32 @@
  ****************************************************************/
 package snx.sbt
 
-/** The kind of artefact a project produces, and the publish-versus-link discriminant: platform-independent `NIR`
-  * (published as a jar), a native `Library`, or an `Executable`.
+/** The kind of artefact a project produces, and the publish-versus-link discriminant: a platform-independent
+  * [[Deliverable.NIR NIR]] (published as a jar), a native [[Deliverable.Library Library]] in one of its two emit forms,
+  * or an [[Deliverable.Executable Executable]]. The deliverable fully describes the artefact; how each native library it
+  * links is bound is a separate per-library concern ([[NativeLibrary]]), and a static C runtime is a separate opt-in
+  * ([[SNXImports.SNX.staticRuntime]]).
   */
-enum Deliverable derives CanEqual:
-  case NIR, Library, Executable
+sealed trait Deliverable derives CanEqual
+
+/** The [[Deliverable]] variants. */
+object Deliverable:
+
+  /** Compiled NIR, published as a platform-independent jar and linked by the consumer. */
+  case object NIR extends Deliverable
+
+  /** A linked native executable. */
+  case object Executable extends Deliverable
+
+  /** A native library artefact - the parent of its two emit forms. */
+  sealed trait Library extends Deliverable
+
+  /** The [[Library]] emit forms. */
+  object Library:
+
+    /** A static library archive (`.a`/`.lib`). */
+    case object Static extends Library
+
+    /** A shared library (`.so`/`.dylib`/`.dll`). */
+    case object Shared extends Library
+end Deliverable

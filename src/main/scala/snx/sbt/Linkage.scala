@@ -19,7 +19,7 @@ package snx.sbt
 
 import snx.NativeRuntime
 
-/** How a native `Library` or `Executable` is linked: a fully `Static` artefact, or a `Dynamic` one. See
+/** How a [[NativeLibrary]] binds into a binary: linked `Static` (baked in) or `Dynamic` (resolved at runtime). See
   * [[Linkage$ Linkage]].
   */
 enum Linkage derives CanEqual:

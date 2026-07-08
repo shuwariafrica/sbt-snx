@@ -3,7 +3,7 @@ enablePlugins(SNXPlugin)
 scalaVersion := "3.8.4"
 
 SNX.deliverable := Executable
-SNX.linkage := Static
+SNX.modifiers += SNX.staticRuntime
 
 // A vendored CMake static archive folded into a FULLY-STATIC executable. The scripted excludeFilter gates the
 // `static` leaf to musl or MSVC (the toolchains that link static executables). Proves the collected archive links into

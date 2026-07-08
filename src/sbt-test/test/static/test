@@ -1,6 +1,6 @@
-# A NIR library opts its test binary into a fully-static link via `Test / SNX.linkage := Static`, independent of the
-# deliverable's dynamic linkage (the no-coupling default) - resolveTestTarget now honours it for every deliverable,
-# where before a non-Executable test was forced dynamic. The test binary links statically and runs through the
-# framework. Gated to static-capable platforms (musl/MSVC) by the scripted excludeFilter.
+# A NIR library opts its test binary into a static C runtime via `Test / SNX.modifiers += SNX.staticRuntime`, scoped to
+# the test binary and leaving the (unlinked) NIR deliverable untouched. checkStaticTest asserts the platform's sense of
+# static (fully static on musl, a static /MT C runtime on MSVC); the binary then runs through the framework. Gated to
+# the static-capable toolchains (musl/MSVC) by the scripted excludeFilter.
 > checkStaticTest
 > test
