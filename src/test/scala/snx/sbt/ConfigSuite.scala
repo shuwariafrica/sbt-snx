@@ -19,6 +19,7 @@ package snx.sbt
 
 import sbt.librarymanagement.Configurations
 
+import scala.scalanative.build.Mode
 import scala.scalanative.build.NativeConfig
 
 import snx.ABI
@@ -151,4 +152,12 @@ class ConfigSuite extends munit.FunSuite:
     val staging = new java.io.File("target/snx-staging-test")
     SNXPlugin.requireStaged(Seq(new java.io.File(staging, "prefix/lib/libanswer.a")), staging)
     intercept[SNXError.OutputOutsideStaging](SNXPlugin.requireStaged(Seq(new java.io.File("vendor/answer/include")), staging))
+
+  test("cmakeBuildType maps each Scala Native mode name to its CMake build type - debug and size distinct, releases Release"):
+    // Driven by Scala Native's real Mode values: the mapping matches on Mode.name strings, so this pins that coupling -
+    // a wrong/renamed name would silently fall through to "Release" (CMake does not error on an unknown build type).
+    assertEquals(Backend.cmakeBuildType(Mode.debug), "Debug")
+    assertEquals(Backend.cmakeBuildType(Mode.releaseFast), "Release")
+    assertEquals(Backend.cmakeBuildType(Mode.releaseFull), "Release")
+    assertEquals(Backend.cmakeBuildType(Mode.releaseSize), "MinSizeRel")
 end ConfigSuite

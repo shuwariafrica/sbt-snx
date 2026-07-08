@@ -75,6 +75,26 @@ resolved `NativeRuntime` to a `Native` transform, carried with `Modifier.platfor
 option channels (`linkOptions`, `compileOptions`, `cOptions`, `cppOptions`), the structured `library`/`include`/
 `define`, the scalar settings above, `embedResources`/`debugSymbols`/`finalFields`/`linktimeProperty`, and `update` for
 anything else. `Modifier.wholeArchive(archive)` force-links a whole static archive in each platform's linker syntax.
+
+### Build modes
+
+`SNX.mode` selects Scala Native's build mode, which sets the optimisation level: `Mode.debug` (the default) is `-O0`,
+for fast, debuggable development builds; `Mode.releaseFast` is `-O2`, `Mode.releaseFull` is `-O3`, and `Mode.releaseSize`
+optimises for size. A release build is one line:
+
+```scala
+SNX.mode := Mode.releaseFast
+```
+
+`SNX.lto := LTO.thin` (or `LTO.full`) adds link-time optimisation across the project's own and bundled C (`-flto`); it is
+off by default and thin LTO is unsupported when targeting macOS. A `NIR` deliverable is mode-independent - it ships raw
+NIR and the consumer's own mode optimises at their link - so only `Executable` and `Library` deliverables need a mode set
+here.
+
+A vendored library follows `SNX.mode`: its CMake `CMAKE_BUILD_TYPE` is `Debug` for `Mode.debug`, `MinSizeRel` for
+`Mode.releaseSize`, and `Release` otherwise, and the vendored build cache keys on it (a dev `Debug` build and a release
+build are cached separately). LTO does not extend into a vendored build (it is a separate compilation) - pass `-flto`
+through the backend's own `cmake(targets, flags)` if you need it there.
 `SNX.includeDirs` and `SNX.libDirs` add `-I`/`-L` directories - host-discovered paths are dropped when cross-targeting,
 so a cross build is not contaminated by the host toolchain's directories - and `SNX.clang`/`SNX.clangPP` override the
 discovered compilers. `.c`, `.cpp`, and `.S` sources under `src/main/resources/scala-native/` are compiled into the

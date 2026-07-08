@@ -208,9 +208,10 @@ object SNXPlugin extends AutoPlugin:
       val cross = SNX.target.value != SNX.host
       val clang = resolveClang(SNX.clang.value)
       val clangPP = resolveClangPP(SNX.clangPP.value)
+      val mode = SNX.mode.value
       val base =
         discovered(clang, clangPP, SNX.includeDirs.value, SNX.libDirs.value, cross)
-          .withMode(SNX.mode.value)
+          .withMode(mode)
           .withGC(SNX.gc.value)
           .withLTO(SNX.lto.value)
           .withOptimize(SNX.optimize.value)
@@ -231,7 +232,19 @@ object SNXPlugin extends AutoPlugin:
       val rootBase = (LocalRootProject / baseDirectory).value
       val build =
         (spec: Vendored, linkage: Linkage) =>
-          buildVendored(spec, linkage, runtime, clang.toFile.nn, clangPP.toFile.nn, projectBase, rootBase, staging, cache, converter, log)
+          buildVendored(
+            spec,
+            linkage,
+            mode,
+            runtime,
+            clang.toFile.nn,
+            clangPP.toFile.nn,
+            projectBase,
+            rootBase,
+            staging,
+            cache,
+            converter,
+            log)
       val (rebound, reconciliation) = rebind(base, requirements, libraries.map(l => l.name -> l).toMap, runtime, build)
       // Routine for an all-system link (every requirement is a default `-l`), so log at info only when the project
       // provisions a library locally.
@@ -622,6 +635,7 @@ object SNXPlugin extends AutoPlugin:
   private def buildVendored(
     library: Vendored,
     linkage: Linkage,
+    mode: Mode,
     runtime: NativeRuntime,
     clang: File,
     clangPP: File,
@@ -639,6 +653,7 @@ object SNXPlugin extends AutoPlugin:
           library.backend,
           runtime,
           linkage,
+          mode,
           clang,
           clangPP,
           Vendored.contentDigest(location),
@@ -654,6 +669,7 @@ object SNXPlugin extends AutoPlugin:
           library.backend,
           runtime,
           linkage,
+          mode,
           clang,
           clangPP,
           s"git:$uri@$ref",
@@ -673,6 +689,7 @@ object SNXPlugin extends AutoPlugin:
     backend: Backend,
     runtime: NativeRuntime,
     linkage: Linkage,
+    mode: Mode,
     clang: File,
     clangPP: File,
     sourceId: String,
@@ -684,7 +701,8 @@ object SNXPlugin extends AutoPlugin:
     val sourceStaging = new File(staging, name)
     val outputDir = cache.outputDirectory
     val key =
-      List(BuildInfo.version, runtime.toString, linkage.toString, toolchainId(clang, clangPP), sourceId) ++ backend.cacheKey(runtime)
+      List(BuildInfo.version, runtime.toString, linkage.toString, mode.name, toolchainId(clang, clangPP), sourceId) ++
+        backend.cacheKey(runtime)
     val (archives, includes) = ActionCache.cache[Seq[String], (Seq[String], Seq[String])](
       key,
       Digest.zero,
@@ -694,7 +712,7 @@ object SNXPlugin extends AutoPlugin:
     ) { _ =>
       val location = locate()
       IO.delete(sourceStaging)
-      val built = backend.build(BuildContext(location, sourceStaging, runtime, linkage, clang, clangPP, log))
+      val built = backend.build(BuildContext(location, sourceStaging, runtime, linkage, mode, clang, clangPP, log))
       requireStaged(built.libraries ++ built.includes, sourceStaging)
       val outputs =
         built.libraries.map(file => converter.toVirtualFile(file.toPath.nn)) ++

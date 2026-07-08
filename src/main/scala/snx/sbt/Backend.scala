@@ -23,6 +23,7 @@ import sbt.util.Logger
 
 import java.io.File
 
+import scala.scalanative.build.Mode
 import scala.sys.process.Process
 import scala.sys.process.ProcessLogger
 
@@ -33,13 +34,16 @@ import snx.SNXError
 
 /** The inputs a [[Backend]] receives: the source directory, a staging directory for its outputs, the resolved
   * [[snx.NativeRuntime NativeRuntime]], the requested [[Linkage]] (a `Dynamic` request must build a shared library, a
-  * `Static` one an archive), the C and C++ compilers, and the build logger.
+  * `Static` one an archive), the Scala Native build [[scala.scalanative.build.Mode Mode]] (from which a CMake backend
+  * derives `CMAKE_BUILD_TYPE`, matching the deliverable's own optimisation level), the C and C++ compilers, and the
+  * build logger.
   */
 final case class BuildContext(
   source: File,
   staging: File,
   runtime: NativeRuntime,
   linkage: Linkage,
+  mode: Mode,
   clang: File,
   clangPP: File,
   log: Logger)
@@ -85,6 +89,7 @@ private[sbt] object Backend:
       if !(context.source / "CMakeLists.txt").isFile then
         fail(SNXError.CMakeBuildFailed(s"snx: no CMakeLists.txt in ${context.source.getAbsolutePath}"))
       val shared = context.linkage == Linkage.Dynamic
+      val buildType = cmakeBuildType(context.mode)
       val buildDir = context.staging / "build"
       val prefix = context.staging / "prefix"
       IO.createDirectory(buildDir)
@@ -99,20 +104,20 @@ private[sbt] object Backend:
           context.source.getAbsolutePath,
           "-B",
           buildDir.getAbsolutePath,
-          "-DCMAKE_BUILD_TYPE=Release",
+          s"-DCMAKE_BUILD_TYPE=$buildType",
           s"-DBUILD_SHARED_LIBS=${if shared then "ON" else "OFF"}"
         ) ++ overrides ++ configureFlags,
         "configure",
         context.log
       )
       run(
-        Seq("cmake", "--build", buildDir.getAbsolutePath, "--config", "Release", "--parallel")
+        Seq("cmake", "--build", buildDir.getAbsolutePath, "--config", buildType, "--parallel")
           ++ targets.flatMap(target => Seq("--target", target)),
         "build",
         context.log
       )
       run(
-        Seq("cmake", "--install", buildDir.getAbsolutePath, "--prefix", prefix.getAbsolutePath, "--config", "Release"),
+        Seq("cmake", "--install", buildDir.getAbsolutePath, "--prefix", prefix.getAbsolutePath, "--config", buildType),
         "install",
         context.log)
       val accept: String => Boolean = if shared then isShared else isArchive
@@ -134,6 +139,16 @@ private[sbt] object Backend:
   final case class Command(token: String, action: BuildContext => Artefacts) extends Backend:
     def build(context: BuildContext): Artefacts = action(context)
     def cacheKey(runtime: NativeRuntime): Seq[String] = Seq("command", token)
+
+  /** The CMake `CMAKE_BUILD_TYPE` for a Scala Native build [[Mode]], so a vendored library matches the deliverable's own
+    * optimisation: `debug` (-O0) -> `Debug`, `release-size` -> `MinSizeRel`, the other release modes -> `Release`. The
+    * match is on `Mode.name` because the `Mode` cases are `private[scalanative]` (and strict equality has no `CanEqual`
+    * for `Mode`), so it is coupled to Scala Native's mode-name strings; the value is keyed into the vendored build cache.
+    */
+  private[sbt] def cmakeBuildType(mode: Mode): String = mode.name match
+    case "debug"        => "Debug"
+    case "release-size" => "MinSizeRel"
+    case _              => "Release"
 
   private def isArchive(fileName: String): Boolean = fileName.endsWith(".a") || fileName.endsWith(".lib")
 
