@@ -138,7 +138,6 @@ object SNXPlugin extends AutoPlugin:
       SNX.includeDirs := Seq.empty,
       SNX.libDirs := Seq.empty,
       SNX.deliverable := Deliverable.NIR,
-      SNX.linkage := { case _ => Linkage.Dynamic },
       SNX.mode := Mode.default,
       SNX.gc := GC.default,
       SNX.lto := LTO.default,
@@ -231,9 +230,9 @@ object SNXPlugin extends AutoPlugin:
       val projectBase = baseDirectory.value
       val rootBase = (LocalRootProject / baseDirectory).value
       val build =
-        (spec: Vendored) =>
-          buildVendored(spec, runtime, clang.toFile.nn, clangPP.toFile.nn, projectBase, rootBase, staging, cache, converter, log)
-      val (rebound, reconciliation) = rebind(base, requirements, libraries.map(l => l.name -> l.provisioning).toMap, runtime, build)
+        (spec: Vendored, linkage: Linkage) =>
+          buildVendored(spec, linkage, runtime, clang.toFile.nn, clangPP.toFile.nn, projectBase, rootBase, staging, cache, converter, log)
+      val (rebound, reconciliation) = rebind(base, requirements, libraries.map(l => l.name -> l).toMap, runtime, build)
       // Routine for an all-system link (every requirement is a default `-l`), so log at info only when the project
       // provisions a library locally.
       val emit: String => Unit = if libraries.exists(_.provisioning != Provisioning.System) then log.info(_) else log.debug(_)
@@ -276,25 +275,32 @@ object SNXPlugin extends AutoPlugin:
   private[sbt] def rebind(
     base: NativeConfig,
     requirements: Usage,
-    provisioned: Map[String, Provisioning],
+    libraries: Map[String, NativeLibrary],
     runtime: NativeRuntime,
-    build: Vendored => Artefacts): (NativeConfig, Seq[String]) =
+    build: (Vendored, Linkage) => Artefacts): (NativeConfig, Seq[String]) =
     val report = Seq.newBuilder[String]
     def realise(config: NativeConfig, name: String, mode: LinkMode): NativeConfig =
-      provisioned.get(name) match
-        case Some(Provisioning.Vendored(spec)) =>
-          val artefacts = build(spec)
-          report += s"snx library '$name': vendored (${artefacts.archives.size} archive(s))"
-          val withArchives = config
-            .withLinkingOptions(config.linkingOptions ++ archiveLink(runtime, mode, artefacts.archives))
-            .withCompileOptions(config.compileOptions ++ artefacts.includes.map(dir => s"-I${dir.getAbsolutePath}"))
-          applyFlags(withArchives, spec.closureFor(runtime))
-        case Some(Provisioning.Unmanaged) =>
-          report += s"snx library '$name': unmanaged source (symbols compiled in)"
-          config
-        case other =>
-          report += (if other.isDefined then s"snx library '$name': system -l$name" else s"snx library '$name': default -l$name")
-          config.withLinkingOptions(config.linkingOptions ++ defaultLink(runtime, mode, name))
+      libraries.get(name) match
+        case Some(library) =>
+          val linkage = library.linkage.applyOrElse(runtime, (_: NativeRuntime) => provisioningDefault(library.provisioning))
+          library.provisioning match
+            case Provisioning.Vendored(spec) =>
+              if linkage == Linkage.Dynamic then requireDynamicVendorable(runtime, mode, name)
+              val artefacts = build(spec, linkage)
+              report += s"snx library '$name': vendored, linked ${linkageLabel(linkage)} (${artefacts.libraries.size} file(s))"
+              val withLibraries = config
+                .withLinkingOptions(config.linkingOptions ++ vendoredLink(runtime, mode, linkage, name, artefacts.libraries))
+                .withCompileOptions(config.compileOptions ++ artefacts.includes.map(dir => s"-I${dir.getAbsolutePath}"))
+              applyFlags(withLibraries, spec.closureFor(runtime))
+            case Provisioning.Unmanaged =>
+              report += s"snx library '$name': unmanaged source (symbols compiled in)"
+              config
+            case Provisioning.System =>
+              report += s"snx library '$name': system, linked ${linkageLabel(linkage)}"
+              config.withLinkingOptions(config.linkingOptions ++ systemLink(runtime, mode, linkage, name))
+        case None =>
+          report += s"snx library '$name': default -l$name"
+          config.withLinkingOptions(config.linkingOptions ++ systemLink(runtime, mode, Linkage.Dynamic, name))
     val withLibraries = Seq(
       requirements.libraries -> LinkMode.Plain,
       requirements.frameworks -> LinkMode.Framework,
@@ -303,21 +309,100 @@ object SNXPlugin extends AutoPlugin:
     (applyFlags(withLibraries, Flags(requirements.defines, requirements.linkFlags, false)), report.result())
   end rebind
 
-  /** The default link tokens for an unprovisioned (system) library name, in its link-mode syntax. */
-  private def defaultLink(runtime: NativeRuntime, mode: LinkMode, name: String): Seq[String] =
+  /** The linkage a provisioning defaults to when a library declares none: `System` dynamic, `Vendored` static. */
+  private[sbt] def provisioningDefault(provisioning: Provisioning): Linkage = provisioning match
+    case Provisioning.System      => Linkage.Dynamic
+    case Provisioning.Vendored(_) => Linkage.Static
+    case Provisioning.Unmanaged   => Linkage.Dynamic
+
+  /** The link tokens for a system library `name` in its link mode and linkage, rendered per platform. A dynamic
+    * library is a plain `-l<name>`, framework flag, or name whole-archive; a static one forces that static.
+    */
+  private[sbt] def systemLink(runtime: NativeRuntime, mode: LinkMode, linkage: Linkage, name: String): Seq[String] =
+    val dynamic = dynamicSystemLink(runtime, mode, name)
+    linkage match
+      case Linkage.Dynamic => dynamic
+      case Linkage.Static  =>
+        mode match
+          case LinkMode.Framework =>
+            fail(SNXError.UnsupportedLinkage(s"native framework '$name' cannot be linked statically"))
+          case LinkMode.Plain | LinkMode.WholeArchive => staticSystem(runtime, name, dynamic)
+
+  /** A system library's dynamic link tokens: `-l<name>`, the macOS framework flag, or the name whole-archive form. */
+  private def dynamicSystemLink(runtime: NativeRuntime, mode: LinkMode, name: String): Seq[String] =
     mode match
       case LinkMode.Plain        => Seq("-l" + name)
       case LinkMode.WholeArchive => Modifier.wholeArchiveName(runtime, name)
       case LinkMode.Framework    =>
         runtime match
-          case NativeRuntime.Darwin(_) => Seq("-framework", name)
-          case _                       => Seq.empty
+          case NativeRuntime.Darwin(_)                                 => Seq("-framework", name)
+          case NativeRuntime.Linux(_, _) | NativeRuntime.Windows(_, _) => Seq.empty
 
-  /** The link tokens for a vendored library's built archives, in its link-mode syntax. */
+  /** Force a system library's `dynamic` tokens static, per platform: GNU brackets with `-Bstatic`/`-Bdynamic`; MSVC
+    * names the static `.lib` (its linker has no `-Bstatic`); macOS cannot force a `-l` static, so it fails fast.
+    */
+  private def staticSystem(runtime: NativeRuntime, name: String, dynamic: Seq[String]): Seq[String] =
+    runtime match
+      case NativeRuntime.Linux(_, _) | NativeRuntime.Windows(_, ABI.MinGw) =>
+        Seq("-Wl,-Bstatic") ++ dynamic ++ Seq("-Wl,-Bdynamic")
+      case NativeRuntime.Windows(_, ABI.Msvc) => dynamic
+      case NativeRuntime.Darwin(_)            =>
+        fail(
+          SNXError.UnsupportedLinkage(
+            s"system library '$name' cannot be linked statically on macOS; provision it as Vendored to supply a static archive"))
+
+  /** The link tokens for a vendored library's built files, per linkage. A `Static` build links its archive(s) by path
+    * ([[archiveLink]]); a `Dynamic` build links `-l<name>` against the built shared library and adds its directory to
+    * the link and runtime search paths (`-L`, `-rpath`) - a system dynamic link plus the build's own search path, the
+    * target supplying the shared library at runtime. The infeasible dynamic combinations are rejected before the build
+    * by [[requireDynamicVendorable]], so only the feasible ones are rendered here.
+    */
+  private def vendoredLink(runtime: NativeRuntime, mode: LinkMode, linkage: Linkage, name: String, libraries: Seq[File]): Seq[String] =
+    linkage match
+      case Linkage.Static  => archiveLink(runtime, mode, libraries)
+      case Linkage.Dynamic =>
+        val dirs = libraries.map(_.getParentFile.nn.getAbsolutePath.nn).distinct
+        dynamicSystemLink(runtime, mode, name) ++ dirs.flatMap(dir => Seq("-L" + dir) ++ runtimeSearch(runtime, dir))
+
+  /** Reject the infeasible dynamic-linkage requests for a vendored library before it is built: whole-archive is a
+    * static-archive operation, and a dynamically-linked vendored library on Windows needs DLL redistribution (a
+    * follow-on). The feasible cases - `Plain`/`Framework` on Linux or macOS - pass.
+    */
+  private def requireDynamicVendorable(runtime: NativeRuntime, mode: LinkMode, name: String): Unit =
+    mode match
+      case LinkMode.WholeArchive =>
+        fail(
+          SNXError.UnsupportedLinkage(
+            s"vendored native library '$name' is whole-archive, a static-archive operation, and cannot be linked dynamically"))
+      case LinkMode.Plain | LinkMode.Framework => ()
+    runtime match
+      case NativeRuntime.Linux(_, _) | NativeRuntime.Darwin(_) => ()
+      case NativeRuntime.Windows(_, _)                         =>
+        fail(
+          SNXError.UnsupportedLinkage(
+            s"dynamically linking the vendored native library '$name' on Windows requires DLL redistribution, a follow-on; " +
+              "link it statically, or declare it System to link a host-provided library"))
+
+  /** The runtime search-path tokens so a dynamically-linked vendored library is found when the binary runs on the build
+    * host (its tests and local `run`): an `-rpath` entry pointing at the build directory. PROVEN on Linux; the macOS
+    * `-rpath` is emitted but not yet CI-verified (no local mac host - CMake's default `@rpath` install names, `CMP0042`,
+    * are expected to resolve it). Windows has no `-rpath`, so a dynamically-linked vendored DLL is rejected earlier
+    * ([[requireDynamicVendorable]]).
+    */
+  private def runtimeSearch(runtime: NativeRuntime, dir: String): Seq[String] = runtime match
+    case NativeRuntime.Linux(_, _) | NativeRuntime.Darwin(_) => Seq("-Wl,-rpath," + dir)
+    case NativeRuntime.Windows(_, _)                         => Seq.empty
+
+  /** The link tokens for a vendored library's built static archives, in its link-mode syntax. */
   private def archiveLink(runtime: NativeRuntime, mode: LinkMode, archives: Seq[File]): Seq[String] =
     mode match
       case LinkMode.WholeArchive => archives.flatMap(archive => Modifier.wholeArchivePath(runtime, archive.getAbsolutePath.nn))
-      case _                     => archives.map(_.getAbsolutePath.nn)
+      case LinkMode.Plain | LinkMode.Framework => archives.map(_.getAbsolutePath.nn)
+
+  /** A short label for a linkage, for the reconciliation diagnostic. */
+  private def linkageLabel(linkage: Linkage): String = linkage match
+    case Linkage.Static  => "static"
+    case Linkage.Dynamic => "dynamic"
 
   /** Append `flags`' link flags and `-D` defines onto `config` (multithreading is enforced separately,
     * [[enforceMultithreading]]).
@@ -337,18 +422,13 @@ object SNXPlugin extends AutoPlugin:
   private def linkTask(testConfig: Boolean): Def.Initialize[Task[File]] =
     Def
       .uncachedTask {
-        val runtime = SNX.runtime.value
-        val linkage = SNX.linkage.value.applyOrElse(runtime, (_: NativeRuntime) => Linkage.Dynamic)
-        val (buildTarget, static, mainClass) =
-          if testConfig then
-            val (target, statically) = resolveTestTarget(SNX.deliverable.value, linkage, runtime)
-            (target, statically, Some(testMain))
-          else resolveTarget(SNX.deliverable.value, linkage, runtime, selectMainClass.value)
+        val (buildTarget, mainClass) =
+          if testConfig then (BuildTarget.application, Some(testMain))
+          else resolveTarget(SNX.deliverable.value, selectMainClass.value)
         val converter = fileConverter.value
         val entries = if testConfig then fullClasspath.value else (Runtime / fullClasspath).value
         val classpath = entries.map(entry => converter.toPath(entry.data))
-        val base = SNX.config.value.config.withBuildTarget(buildTarget)
-        val compilerConfig = if static then base.withLinkingOptions(base.linkingOptions :+ "-static") else base
+        val compilerConfig = SNX.config.value.config.withBuildTarget(buildTarget)
         val config = Config.empty
           .withLogger(nativeLogger(streams.value.log))
           .withClassPath(classpath)
@@ -423,33 +503,20 @@ object SNXPlugin extends AutoPlugin:
       (message: String) => log.error(message)
     )
 
-  /** Resolve a deliverable, linkage, and main class into the build target, static flag, and main class. Fails fast for
-    * an unlinked `NIR`, a missing `Executable` main class, or unsupported static linking.
+  /** Resolve a deliverable and main class into the build target and main class. Fails fast for an unlinked `NIR` or a
+    * missing `Executable` main class. The build target follows the deliverable alone - a `Library.Static` archives, a
+    * `Library.Shared` links a shared object, an `Executable` links an application; the static C runtime is a separate
+    * opt-in ([[SNXImports.SNX.staticRuntime]]), and the test binary is always an application.
     */
-  private[sbt] def resolveTarget(
-    deliverable: Deliverable,
-    linkage: Linkage,
-    runtime: NativeRuntime,
-    main: Option[String]): (BuildTarget, Boolean, Option[String]) =
+  private[sbt] def resolveTarget(deliverable: Deliverable, main: Option[String]): (BuildTarget, Option[String]) =
     deliverable match
       case Deliverable.NIR =>
         fail(SNXError.NotLinkable("the NIR deliverable is published as a jar, not linked"))
-      case Deliverable.Library =>
-        val buildTarget = if linkage == Linkage.Static then BuildTarget.libraryStatic else BuildTarget.libraryDynamic
-        (buildTarget, false, None)
-      case Deliverable.Executable =>
+      case Deliverable.Library.Static => (BuildTarget.libraryStatic, None)
+      case Deliverable.Library.Shared => (BuildTarget.libraryDynamic, None)
+      case Deliverable.Executable     =>
         if main.isEmpty then fail(SNXError.MissingMainClass("an Executable deliverable requires a main class"))
-        else if linkage == Linkage.Static && !runtime.supportsStaticLinking then
-          fail(SNXError.StaticLinkingUnsupported(s"static executable linking is not supported on $runtime (requires musl or MSVC)"))
-        else (BuildTarget.application, linkage == Linkage.Static, main)
-
-  /** Resolve the test binary's target: `TestMain` as an application, static only for an `Executable` deliverable with
-    * `Static` test linkage.
-    */
-  private[sbt] def resolveTestTarget(deliverable: Deliverable, linkage: Linkage, runtime: NativeRuntime): (BuildTarget, Boolean) =
-    val effective = if deliverable == Deliverable.Executable then linkage else Linkage.Dynamic
-    val (buildTarget, static, _) = resolveTarget(Deliverable.Executable, effective, runtime, Some(testMain))
-    (buildTarget, static)
+        else (BuildTarget.application, main)
 
   /** Derive the resolved `ModuleID`: a classified dependency resolves under the target's OS/arch classifier. */
   private[sbt] def derive(target: TargetPlatform, dependency: NativeDependency): ModuleID =
@@ -554,6 +621,7 @@ object SNXPlugin extends AutoPlugin:
     */
   private def buildVendored(
     library: Vendored,
+    linkage: Linkage,
     runtime: NativeRuntime,
     clang: File,
     clangPP: File,
@@ -570,6 +638,7 @@ object SNXPlugin extends AutoPlugin:
           slug(directory),
           library.backend,
           runtime,
+          linkage,
           clang,
           clangPP,
           Vendored.contentDigest(location),
@@ -584,6 +653,7 @@ object SNXPlugin extends AutoPlugin:
           s"git-${Hash.trimHashString(s"$uri@$ref", 8)}",
           library.backend,
           runtime,
+          linkage,
           clang,
           clangPP,
           s"git:$uri@$ref",
@@ -602,6 +672,7 @@ object SNXPlugin extends AutoPlugin:
     name: String,
     backend: Backend,
     runtime: NativeRuntime,
+    linkage: Linkage,
     clang: File,
     clangPP: File,
     sourceId: String,
@@ -612,7 +683,8 @@ object SNXPlugin extends AutoPlugin:
     log: Logger): Artefacts =
     val sourceStaging = new File(staging, name)
     val outputDir = cache.outputDirectory
-    val key = List(BuildInfo.version, runtime.toString, toolchainId, sourceId) ++ backend.cacheKey(runtime)
+    val key =
+      List(BuildInfo.version, runtime.toString, linkage.toString, toolchainId(clang, clangPP), sourceId) ++ backend.cacheKey(runtime)
     val (archives, includes) = ActionCache.cache[Seq[String], (Seq[String], Seq[String])](
       key,
       Digest.zero,
@@ -622,13 +694,13 @@ object SNXPlugin extends AutoPlugin:
     ) { _ =>
       val location = locate()
       IO.delete(sourceStaging)
-      val built = backend.build(BuildContext(location, sourceStaging, runtime, clang, clangPP, log))
-      requireStaged(built.archives ++ built.includes, sourceStaging)
+      val built = backend.build(BuildContext(location, sourceStaging, runtime, linkage, clang, clangPP, log))
+      requireStaged(built.libraries ++ built.includes, sourceStaging)
       val outputs =
-        built.archives.map(file => converter.toVirtualFile(file.toPath.nn)) ++
+        built.libraries.map(file => converter.toVirtualFile(file.toPath.nn)) ++
           built.includes.map(dir => ActionCache.packageDirectory(converter.toVirtualFile(dir.toPath.nn), converter, outputDir))
       def relative(files: Seq[File]): Seq[String] = files.map(file => outputDir.relativize(file.toPath).toString)
-      ActionCache.InternalActionResult((relative(built.archives), relative(built.includes)), outputs)
+      ActionCache.InternalActionResult((relative(built.libraries), relative(built.includes)), outputs)
     }
     def absolute(paths: Seq[String]): Seq[File] = paths.map(path => outputDir.resolve(path).nn.toFile.nn)
     Artefacts(absolute(archives), absolute(includes))
@@ -660,14 +732,18 @@ object SNXPlugin extends AutoPlugin:
   /** A filesystem-safe staging label for a vendored origin. */
   private def slug(value: String): String = value.replaceAll("[^A-Za-z0-9]+", "-").nn
 
-  /** A local toolchain identity for the cache key: the `clang` and `cmake` versions. */
-  private def toolchainId: String =
+  /** A toolchain identity for the vendored cache key: the resolved C/C++ compilers actually used - their paths and the C
+    * compiler's `--version`, so an `SNX.clang`/`SNX.clangPP` override or an in-place upgrade invalidates - plus the
+    * `cmake` version. It does NOT capture the CMake backend's ambient build environment (`CC`/`CXX`/`CFLAGS`, the MSVC
+    * target arch), which CMake detects itself; a change there that leaves these unchanged reuses a cached archive.
+    */
+  private def toolchainId(clang: File, clangPP: File): String =
     def version(tool: String): String =
       scala.util
         .Try(scala.sys.process.Process(Seq(tool, "--version")).!!.linesIterator.find(_.nonEmpty).getOrElse(""))
         .toOption
         .getOrElse("")
-    s"clang=${version("clang")};cmake=${version("cmake")}"
+    s"clang=${clang.getAbsolutePath}@${version(clang.getAbsolutePath.nn)};clang++=${clangPP.getAbsolutePath};cmake=${version("cmake")}"
 
   /** The toolchain base: the resolved clang/clang++, the discovered compile/link options (host paths cross-stripped),
     * and the user's include/lib directories.

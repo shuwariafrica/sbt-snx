@@ -39,15 +39,17 @@ enum Provisioning derives CanEqual:
   case Unmanaged
 
 /** A native library a link requires: its linker `name`, its link [[LinkMode mode]], how the project
-  * [[Provisioning provisions]] it, whether it has a system default, and the configurations it applies to. See
-  * [[NativeLibrary$ NativeLibrary]] to construct one.
+  * [[Provisioning provisions]] it, whether it has a system default, the configurations it applies to, and its
+  * per-platform [[Linkage]] (empty defers to the provisioning default). See [[NativeLibrary$ NativeLibrary]] to
+  * construct one.
   */
 final case class NativeLibrary private[sbt] (
   name: String,
   mode: LinkMode,
   provisioning: Provisioning,
   systemDefault: Boolean,
-  configurations: Option[String]
+  configurations: Option[String],
+  linkage: PartialFunction[NativeRuntime, Linkage]
 ) derives CanEqual:
 
   /** Force-load every member of this library, including unreferenced ones. */
@@ -55,6 +57,12 @@ final case class NativeLibrary private[sbt] (
 
   /** Declare that this library has no system default, so an unprovisioned build fails at configuration time. */
   def noSystemDefault: NativeLibrary = copy(systemDefault = false)
+
+  /** Set this library's per-platform linkage; a platform the selector does not match falls to the provisioning
+    * default (`System` dynamic, `Vendored` static). A bare `Static`/`Dynamic` lifts to a constant selector through
+    * [[Linkage$ Linkage]]'s conversion.
+    */
+  def linkage(selector: PartialFunction[NativeRuntime, Linkage]): NativeLibrary = copy(linkage = selector)
 
   /** Restrict this library to a configuration (for example `Test`); without one it applies to every link. */
   @targetName("configuration")
@@ -69,17 +77,20 @@ end NativeLibrary
 object NativeLibrary:
 
   /** A system-provisioned library (`-l<name>`). */
-  def apply(name: String): NativeLibrary = NativeLibrary(name, LinkMode.Plain, Provisioning.System, true, None)
+  def apply(name: String): NativeLibrary =
+    NativeLibrary(name, LinkMode.Plain, Provisioning.System, true, None, PartialFunction.empty)
 
   /** A library built from source by `vendored`. */
   def apply(name: String, vendored: Vendored): NativeLibrary =
-    NativeLibrary(name, LinkMode.Plain, Provisioning.Vendored(vendored), true, None)
+    NativeLibrary(name, LinkMode.Plain, Provisioning.Vendored(vendored), true, None, PartialFunction.empty)
 
   /** A library under an explicit [[Provisioning]] (for example [[Provisioning.Unmanaged]]). */
-  def apply(name: String, provisioning: Provisioning): NativeLibrary = NativeLibrary(name, LinkMode.Plain, provisioning, true, None)
+  def apply(name: String, provisioning: Provisioning): NativeLibrary =
+    NativeLibrary(name, LinkMode.Plain, provisioning, true, None, PartialFunction.empty)
 
   /** A macOS framework (`-framework <name>`), contributing nothing elsewhere. */
-  def framework(name: String): NativeLibrary = NativeLibrary(name, LinkMode.Framework, Provisioning.System, true, None)
+  def framework(name: String): NativeLibrary =
+    NativeLibrary(name, LinkMode.Framework, Provisioning.System, true, None, PartialFunction.empty)
 
   // In the companion so the instances are in implicit scope at the `SNX.libraries +=` site; the lift adds an
   // unconditional library to every platform's result.

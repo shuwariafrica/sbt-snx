@@ -154,11 +154,7 @@ object SNXImports:
 
     /** The kind of artefact to produce; fixes the publish-versus-link fork. Defaults to [[Deliverable.NIR]]. */
     val deliverable: SettingKey[Deliverable] =
-      SettingKey[Deliverable]("snxDeliverable", "Artefact kind: NIR, Library, or Executable (default: NIR).")
-
-    /** The per-platform link mode for a `Library`/`Executable` deliverable. Defaults to [[Linkage.Dynamic]]. */
-    val linkage: SettingKey[PartialFunction[NativeRuntime, Linkage]] =
-      SettingKey[PartialFunction[NativeRuntime, Linkage]]("snxLinkage", "Per-platform link mode (default: Dynamic).")
+      SettingKey[Deliverable]("snxDeliverable", "Artefact kind: NIR, Library.Static, Library.Shared, or Executable (default: NIR).")
 
     /** Links the Scala Native binary for the enclosing configuration and returns it. */
     val link: TaskKey[File] =
@@ -201,6 +197,22 @@ object SNXImports:
     /** Per-platform [[Native]] transforms, applied last. */
     val modifiers: SettingKey[Seq[Modifier[Native]]] =
       SettingKey[Seq[Modifier[Native]]]("snxModifiers", "Per-platform native configuration transforms.")
+
+    /** A convenience [[Modifier]] that links the C runtime statically for the final binary it is added to (an
+      * `Executable`, a test binary, or a `Library.Shared`): `-static` on musl (a fully static binary), `/MT`
+      * (`-fms-runtime-lib=static`) on MSVC (a static CRT - the Win32 system DLLs stay dynamic, there is no static form).
+      * Add it where you want it - `SNX.modifiers += SNX.staticRuntime`, or `Test / SNX.modifiers += SNX.staticRuntime`
+      * for the test binary only. It fails fast on a platform that cannot link a static C runtime (glibc, macOS, MinGW).
+      */
+    val staticRuntime: Modifier[Native] = {
+      case NativeRuntime.Linux(_, ABI.Musl) =>
+        native => native.linkOptions("-static")
+      case NativeRuntime.Windows(_, ABI.Msvc) =>
+        native => native.compileOptions("-fms-runtime-lib=static").linkOptions("-fms-runtime-lib=static")
+      case runtime =>
+        throw snx.SNXError.StaticLinkingUnsupported( // scalafix:ok DisableSyntax.throw
+          s"a static C runtime is not supported on $runtime; SNX.staticRuntime requires musl or MSVC")
+    }
 
     /** The resolved native configuration. */
     val config: TaskKey[Native] =

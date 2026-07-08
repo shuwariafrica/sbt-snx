@@ -45,6 +45,12 @@ object SNXError:
   /** A static executable requested on a toolchain that cannot link one - musl or MSVC is required. */
   final case class StaticLinkingUnsupported(message: String) extends SNXError(message)
 
+  /** A per-library linkage sbt-snx cannot render - a statically-linked macOS framework, a static system library on a
+    * platform with no static system archive, a whole-archive vendored library requested dynamic (whole-archive is a
+    * static-archive operation), or a dynamically-linked vendored library on Windows (DLL redistribution is a follow-on).
+    */
+  final case class UnsupportedLinkage(message: String) extends SNXError(message)
+
   /** A native library declared to have no system default that no provisioning supplies. */
   final case class UnprovisionedLibrary(message: String) extends SNXError(message)
 

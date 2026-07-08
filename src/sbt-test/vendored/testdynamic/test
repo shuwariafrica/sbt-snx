@@ -1,0 +1,7 @@
+# A NIR library folds a DYNAMICALLY-linked vendored CMake library into its TEST link only (Linux-only; the excludeFilter
+# gates `testdynamic`). The munit test links the test binary against libanswer.so, then runs it through the TestAdapter -
+# resolving libanswer.so at runtime via the -rpath the plugin adds - and verifies the answer; checkTestDynamic then
+# asserts ldd reports the dynamic dependency. Proves the user's headline case: a NIR item's test executable linked
+# dynamically against an external library.
+> test
+> checkTestDynamic

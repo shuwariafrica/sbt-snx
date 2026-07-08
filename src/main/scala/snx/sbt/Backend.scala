@@ -32,12 +32,22 @@ import snx.NativeRuntime.*
 import snx.SNXError
 
 /** The inputs a [[Backend]] receives: the source directory, a staging directory for its outputs, the resolved
-  * [[snx.NativeRuntime NativeRuntime]], the C and C++ compilers, and the build logger.
+  * [[snx.NativeRuntime NativeRuntime]], the requested [[Linkage]] (a `Dynamic` request must build a shared library, a
+  * `Static` one an archive), the C and C++ compilers, and the build logger.
   */
-final case class BuildContext(source: File, staging: File, runtime: NativeRuntime, clang: File, clangPP: File, log: Logger)
+final case class BuildContext(
+  source: File,
+  staging: File,
+  runtime: NativeRuntime,
+  linkage: Linkage,
+  clang: File,
+  clangPP: File,
+  log: Logger)
 
-/** The outputs of a [[Backend]] build: the static archives to link and the header directories to expose (`-I`). */
-final case class Artefacts(archives: Seq[File], includes: Seq[File]) derives CanEqual
+/** The outputs of a [[Backend]] build: the built library files to link - static archives or shared libraries, per the
+  * [[BuildContext]]'s [[Linkage]] - and the header directories to expose (`-I`).
+  */
+final case class Artefacts(libraries: Seq[File], includes: Seq[File]) derives CanEqual
 
 /** Factory for [[Artefacts]]. */
 object Artefacts:
@@ -57,7 +67,8 @@ sealed private[sbt] trait Backend:
 /** Supported [[Backend]]s. */
 private[sbt] object Backend:
 
-  /** A CMake build of `targets` with per-platform configure `flags`, static libraries forced, and an optional
+  /** A CMake build of `targets` with per-platform configure `flags`, `BUILD_SHARED_LIBS` set from the requested
+    * [[Linkage]] (a `Static` request forces archives, a `Dynamic` one shared libraries), and an optional
     * `moduleOverrides` directory prepended to `CMAKE_MODULE_PATH`.
     */
   final case class CMake(flags: PartialFunction[NativeRuntime, Seq[String]], targets: Seq[String], moduleOverrides: Option[File])
@@ -73,6 +84,7 @@ private[sbt] object Backend:
         case Linux(_, _) | Darwin(_) | Windows(_, ABI.Msvc) => ()
       if !(context.source / "CMakeLists.txt").isFile then
         fail(SNXError.CMakeBuildFailed(s"snx: no CMakeLists.txt in ${context.source.getAbsolutePath}"))
+      val shared = context.linkage == Linkage.Dynamic
       val buildDir = context.staging / "build"
       val prefix = context.staging / "prefix"
       IO.createDirectory(buildDir)
@@ -88,7 +100,8 @@ private[sbt] object Backend:
           "-B",
           buildDir.getAbsolutePath,
           "-DCMAKE_BUILD_TYPE=Release",
-          "-DBUILD_SHARED_LIBS=OFF") ++ overrides ++ configureFlags,
+          s"-DBUILD_SHARED_LIBS=${if shared then "ON" else "OFF"}"
+        ) ++ overrides ++ configureFlags,
         "configure",
         context.log
       )
@@ -102,12 +115,14 @@ private[sbt] object Backend:
         Seq("cmake", "--install", buildDir.getAbsolutePath, "--prefix", prefix.getAbsolutePath, "--config", "Release"),
         "install",
         context.log)
-      val archives = prefix.allPaths.get().filter(file => file.isFile && isArchive(file.getName.nn))
-      if archives.isEmpty then
+      val accept: String => Boolean = if shared then isShared else isArchive
+      val libraries = prefix.allPaths.get().filter(file => file.isFile && accept(file.getName.nn))
+      if libraries.isEmpty then
         fail(
           SNXError.CMakeBuildFailed(
-            s"snx: cmake produced no static library under ${prefix.getAbsolutePath}; the project must define install() rules."))
-      Artefacts(archives, Seq(prefix / "include").filter(_.isDirectory))
+            s"snx: cmake produced no ${if shared then "shared" else "static"} library under ${prefix.getAbsolutePath}; " +
+              s"the project must define install() rules for its ${if shared then "LIBRARY/RUNTIME" else "ARCHIVE"} artefacts."))
+      Artefacts(libraries, Seq(prefix / "include").filter(_.isDirectory))
     end build
 
     def cacheKey(runtime: NativeRuntime): Seq[String] =
@@ -121,6 +136,8 @@ private[sbt] object Backend:
     def cacheKey(runtime: NativeRuntime): Seq[String] = Seq("command", token)
 
   private def isArchive(fileName: String): Boolean = fileName.endsWith(".a") || fileName.endsWith(".lib")
+
+  private def isShared(fileName: String): Boolean = fileName.endsWith(".so") || fileName.endsWith(".dylib")
 
   private def fail(error: SNXError): Nothing = throw error // scalafix:ok DisableSyntax.throw
 
