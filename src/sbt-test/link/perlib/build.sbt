@@ -47,6 +47,7 @@ checkDynamicLibc := {
   val ldd = Process(Seq("sh", "-c", s"ldd '${binary.getAbsolutePath}' 2>&1 || true")).!!.toLowerCase
   assert(
     !(ldd.contains("not a dynamic executable") || ldd.contains("statically linked")),
-    s"the binary is fully static; the dynamic deliverable should keep libc dynamic:\n$ldd")
+    s"the binary is fully static; the dynamic deliverable should keep libc dynamic:\n$ldd"
+  )
   streams.value.log.info(s"snx link/perlib: static archive linked via the -Bstatic bracket, libc still dynamic:\n$ldd")
 }
