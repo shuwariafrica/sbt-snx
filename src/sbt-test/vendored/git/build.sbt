@@ -7,9 +7,7 @@ SNX.deliverable := Executable
 // A vendored Git source cloned from a local repository (created offline by setupRepo, no network) at the pinned tag
 // v1, built with CMake and linked into the binary. The file URI is built via Path.toUri so it is well-formed on
 // every OS (file:///... including a Windows drive letter), keeping the fixture host-agnostic.
-SNX.libraries += NativeLibrary(
-  "answer",
-  Vendored.git((target.value / "answer-repo").toPath.toUri.toString, "v1").cmake("answer"))
+SNX.libraries += NativeLibrary("answer", Vendored.git((target.value / "answer-repo").toPath.toUri.toString, "v1").cmake("answer"))
 
 // Build a throwaway git repo where tag v1 returns 42 but a LATER commit on the default branch returns 0. So a run
 // printing 42 proves the plugin checked out the pinned ref v1, not HEAD - the behaviour that distinguishes
