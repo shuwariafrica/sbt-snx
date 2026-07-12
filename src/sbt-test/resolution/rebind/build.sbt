@@ -21,9 +21,7 @@ val app = project
   .dependsOn(middle)
   .settings(
     SNX.deliverable := Executable,
-    SNX.libraries ++= Seq(
-      NativeLibrary("snx_rebind_foo", Provisioning.Unmanaged),
-      NativeLibrary("snx_rebind_mid", Provisioning.Unmanaged))
+    SNX.libraries ++= Seq(NativeLibrary("snx_rebind_foo", Provisioning.Unmanaged), NativeLibrary("snx_rebind_mid", Provisioning.Unmanaged))
   )
 
 val bare = project

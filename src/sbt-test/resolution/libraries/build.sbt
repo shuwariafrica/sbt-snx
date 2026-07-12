@@ -19,7 +19,8 @@ checkLift := Def.uncached {
   val names = libraries.map(_.name).toSet
   assert(
     names == Set("snx_lib_plain", "snx_lib_whole", "snx_lib_framework", "snx_lib_seq1", "snx_lib_seq2"),
-    s"the += / ++= lifts did not accumulate every library onto the platform: $names")
+    s"the += / ++= lifts did not accumulate every library onto the platform: $names"
+  )
   assert(libraries.find(_.name == "snx_lib_whole").exists(_.mode == LinkMode.WholeArchive), "whole-archive mode lost through the lift")
   assert(libraries.find(_.name == "snx_lib_framework").exists(_.mode == LinkMode.Framework), "framework mode lost through the lift")
   streams.value.log.info("snx resolution/libraries: SNX.libraries += NativeLibrary lift compiles and accumulates")
