@@ -4,7 +4,7 @@ scalaVersion := "3.8.4"
 
 // Plain `% Test` must resolve through sbt's own path (the libraryDependencies element type is ModuleID), untouched
 // by the NativeDependency conversions.
-libraryDependencies += "org.scalameta" %% "munit" % "1.3.2" % Test
+libraryDependencies += "org.scalameta" %% "munit" % sys.props("munit.version") % Test
 
 // The managed-dependency DSL - the `% NativeClassifier` marker and the forwarded config builder in either order - reach
 // NativeDependency through the plugin autoImport (the marker argument selects the conversion). NativeDependency is a

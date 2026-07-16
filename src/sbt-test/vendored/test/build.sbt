@@ -2,7 +2,7 @@ enablePlugins(SNXPlugin)
 
 scalaVersion := "3.8.4"
 
-libraryDependencies += "org.scalameta" %% "munit" % "1.3.2" % Test
+libraryDependencies += "org.scalameta" %% "munit" % sys.props("munit.version") % Test
 testFrameworks += new TestFramework("munit.Framework")
 
 // A NIR library publishes its C as source, so a vendored library for it belongs only in the Test link - here, building
