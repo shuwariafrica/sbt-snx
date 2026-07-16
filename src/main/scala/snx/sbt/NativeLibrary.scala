@@ -60,7 +60,8 @@ final case class NativeLibrary private[sbt] (
 
   /** Set this library's per-platform linkage; a platform the selector does not match falls to the provisioning
     * default (`System` dynamic, `Vendored` static). A bare `Static`/`Dynamic` lifts to a constant selector through
-    * [[Linkage$ Linkage]]'s conversion.
+    * [[Linkage$ Linkage]]'s conversion. Linkage does not apply to an `Unmanaged` library (its source is compiled in) -
+    * setting one that resolves for the build runtime fails the build.
     */
   def linkage(selector: PartialFunction[NativeRuntime, Linkage]): NativeLibrary = copy(linkage = selector)
 

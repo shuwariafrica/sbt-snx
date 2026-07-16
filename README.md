@@ -61,6 +61,11 @@ static CRT; the Win32 system DLLs stay dynamic, since Windows has no fully-stati
 and MinGW, which cannot link a static C runtime. Per-library static linking (a static C library alongside a dynamic
 libc) is a separate `NativeLibrary` concern, below.
 
+A vendored C library must match this CRT choice, or the link mixes runtimes: on MSVC, build it against the same static
+CRT by passing `-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>` (with
+`-DCMAKE_POLICY_DEFAULT_CMP0091=NEW`) through the CMake backend's per-platform `flags`; on musl, link it statically (the
+`Vendored` default), since a fully static binary cannot load a shared library.
+
 `SNX.link` links the binary for the enclosing configuration. `run` runs it, forwarding arguments and `run / envVars`;
 `test` runs the project's test frameworks as a native binary (it requires `Test / fork := false`). `run`, `runMain`,
 and `test` override sbt's defaults.
@@ -95,6 +100,7 @@ A vendored library follows `SNX.mode`: its CMake `CMAKE_BUILD_TYPE` is `Debug` f
 `Mode.releaseSize`, and `Release` otherwise, and the vendored build cache keys on it (a dev `Debug` build and a release
 build are cached separately). LTO does not extend into a vendored build (it is a separate compilation) - pass `-flto`
 through the backend's own `cmake(targets, flags)` if you need it there.
+
 `SNX.includeDirs` and `SNX.libDirs` add `-I`/`-L` directories - host-discovered paths are dropped when cross-targeting,
 so a cross build is not contaminated by the host toolchain's directories - and `SNX.clang`/`SNX.clangPP` override the
 discovered compilers. `.c`, `.cpp`, and `.S` sources under `src/main/resources/scala-native/` are compiled into the
@@ -144,26 +150,30 @@ rebound to a vendored or unmanaged provisioning, or left to its default `-l<name
 visible.
 
 `.wholeArchive` force-loads every member of a library (for example to keep `__attribute__((constructor))`
-registrations); `NativeLibrary.framework(name)` is a macOS framework, contributing nothing elsewhere. A library declared
-`.noSystemDefault` that no provisioning supplies fails the build with a directed message rather than an unresolved
-`-l<name>` at link time.
+registrations); `NativeLibrary.framework(name)` is a macOS framework, contributing nothing elsewhere. On macOS a
+whole-archive is by archive path (`-force_load`), not by name, so a whole-archive **System** library fails fast there -
+provision it `Vendored` (its built archive is force-loaded by path) or force-load a path with `Modifier.wholeArchive(file)`.
+A library declared `.noSystemDefault` that no provisioning supplies fails the build with a directed message rather than an
+unresolved `-l<name>` at link time.
 
 `.linkage` sets how a library is linked, per platform - a decision independent of its provisioning. Unset, a library
 follows its provisioning's default (System dynamic, Vendored static); a bare `Static`/`Dynamic` lifts to a constant. A
-static system library links via the platform's bracket (GNU `-Wl,-Bstatic -l<name> -Wl,-Bdynamic`, keeping libc dynamic;
-MSVC names the static `.lib`) - so a dynamic deliverable with libraries linked `Static` is a maximal-static build (own
-code and each library static, libc dynamic) that works on glibc, where a fully static executable does not. It needs the
-library's static archive present (installed, or provisioned `Vendored`, which builds one).
+static system library links via the GNU and MinGW bracket (`-Wl,-Bstatic -l<name> -Wl,-Bdynamic`, keeping libc dynamic) -
+so a dynamic deliverable with libraries linked `Static` is a maximal-static build (own code and each library static, libc
+dynamic) that works on glibc, where a fully static executable does not. It needs the library's static archive present
+(installed, or provisioned `Vendored`, which builds one).
 
 ```scala
-SNX.libraries += NativeLibrary("z").linkage { case Linux(_, _) | Windows(_, _) => Static } // macOS falls to dynamic
+SNX.libraries += NativeLibrary("z").linkage { case Linux(_, _) | Windows(_, MinGw) => Static } // MSVC and macOS fall through
 ```
 
-Forcing a static link the platform cannot provide - a macOS system library with no static archive, or a statically-linked
-framework - fails fast. A `Vendored` library links static or dynamic exactly as a `System` one: the provisioning only
-builds the artefact the linkage needs - a static archive, or a shared library the dynamic link references (`-l<name>
--L<builtdir>`) and the target supplies at runtime. A whole-archive library cannot be linked dynamically (whole-archive
-is a static-archive operation), and a dynamically-linked vendored library on Windows (DLL redistribution) is a follow-on.
+Forcing a static link the platform cannot honour fails fast: MSVC has no `-Bstatic` (static selection is by lib name, so
+name the static `.lib` or provision `Vendored`), macOS cannot force a system `-l` static (provision it `Vendored` for a
+static archive), and a framework cannot be linked statically at all. A `Vendored` library links static or dynamic exactly
+as a `System` one: the provisioning only builds the artefact the linkage needs - a static archive, or a shared library the
+dynamic link references (`-l<name> -L<builtdir>`) and the target supplies at runtime. A whole-archive library cannot be
+linked dynamically (whole-archive is a static-archive operation), and a dynamically-linked vendored library on Windows
+(DLL redistribution) is a follow-on.
 
 A library carries the configurations it applies to in its own definition, like a managed dependency: `NativeLibrary("z")
 % Test` scopes it to the test link (it folds into the test binary's link and does not export), while a library with no

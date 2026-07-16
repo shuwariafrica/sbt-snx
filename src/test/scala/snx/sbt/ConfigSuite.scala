@@ -67,6 +67,13 @@ class ConfigSuite extends munit.FunSuite:
     SNXPlugin.requireProvisioned(Seq(NativeLibrary("foo")))
     SNXPlugin.requireProvisioned(Seq(NativeLibrary("foo", Vendored.local("v").cmake("x")).noSystemDefault))
 
+  test("requireLinkageApplicable rejects a resolving linkage on an Unmanaged library, ignoring a non-matching one and other provisionings"):
+    val unmanagedStatic = NativeLibrary("x", Provisioning.Unmanaged).linkage { case _ => Linkage.Static }
+    val _ = intercept[SNXError.UnsupportedLinkage](SNXPlugin.requireLinkageApplicable(Seq(unmanagedStatic), glibc))
+    val unmanagedLinuxOnly = NativeLibrary("x", Provisioning.Unmanaged).linkage { case NativeRuntime.Linux(_, _) => Linkage.Static }
+    SNXPlugin.requireLinkageApplicable(Seq(unmanagedLinuxOnly), darwin)
+    SNXPlugin.requireLinkageApplicable(Seq(NativeLibrary("z").linkage { case _ => Linkage.Static }), glibc)
+
   private val archive = new java.io.File("/x/libfoo.a")
   private val archivePath = archive.getAbsolutePath.nn
   private val shared = new java.io.File("/x/lib/libfoo.so")
@@ -110,10 +117,11 @@ class ConfigSuite extends munit.FunSuite:
     val (onDarwin, _) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("z" -> library), darwin, stub)
     assertEquals(onDarwin.linkingOptions, Seq("-lz"), "Darwin unmatched: falls to the System dynamic default")
 
-  test("systemLink renders the per-platform static form: GNU brackets, MinGW brackets, MSVC names the lib, macOS fails"):
+  test("systemLink renders the per-platform static form: GNU and MinGW bracket; MSVC and macOS fail fast"):
     assertEquals(SNXPlugin.systemLink(glibc, LinkMode.Plain, Linkage.Static, "z"), Seq("-Wl,-Bstatic", "-lz", "-Wl,-Bdynamic"))
     assertEquals(SNXPlugin.systemLink(mingw, LinkMode.Plain, Linkage.Static, "z"), Seq("-Wl,-Bstatic", "-lz", "-Wl,-Bdynamic"))
-    assertEquals(SNXPlugin.systemLink(msvc, LinkMode.Plain, Linkage.Static, "z"), Seq("-lz"))
+    // MSVC has no -Bstatic (static selection is by lib name), macOS cannot force a -l static; neither is a silent no-op.
+    val _ = intercept[SNXError.UnsupportedLinkage](SNXPlugin.systemLink(msvc, LinkMode.Plain, Linkage.Static, "z"))
     intercept[SNXError.UnsupportedLinkage](SNXPlugin.systemLink(darwin, LinkMode.Plain, Linkage.Static, "z"))
 
   test("a static whole-archive system library brackets the whole-archive inside -Bstatic on GNU"):

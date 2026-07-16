@@ -221,6 +221,7 @@ object SNXPlugin extends AutoPlugin:
       val libraries = SNX.libraries.value.applyOrElse(runtime, (_: NativeRuntime) => Seq.empty[NativeLibrary]).filter(visible(_, scope))
       val flags = SNX.flags.value.applyOrElse(runtime, (_: NativeRuntime) => Flags.empty)
       requireProvisioned(libraries)
+      requireLinkageApplicable(libraries, runtime)
       val classpath = if testConfig then fullClasspath.value else (Runtime / fullClasspath).value
       val files = classpath.map(entry => fileConverter.value.toPath(entry.data).toFile.nn)
       val requirements = (ownRequirements(libraries, flags) ++ Descriptor.fold(classpathDescriptors(files), runtime)).distinct
@@ -280,6 +281,17 @@ object SNXPlugin extends AutoPlugin:
         fail(
           SNXError.UnprovisionedLibrary(
             s"native library '${library.name}' has no system default; provision it (Vendored or Unmanaged) in SNX.libraries"))
+
+  /** Fail when an `Unmanaged` library carries a linkage that resolves for `runtime`: its source is compiled into the
+    * binary, so a link linkage is meaningless. A per-platform selector that does not match `runtime` is a no-op.
+    */
+  private[sbt] def requireLinkageApplicable(libraries: Seq[NativeLibrary], runtime: NativeRuntime): Unit =
+    libraries.foreach: library =>
+      if library.provisioning == Provisioning.Unmanaged && library.linkage.isDefinedAt(runtime) then
+        fail(
+          SNXError.UnsupportedLinkage(
+            s"native library '${library.name}' is Unmanaged - its source is compiled into the binary, so a link linkage does " +
+              "not apply; remove the .linkage"))
 
   /** Fold the resolved requirements onto `base`: each renders its default `-l<name>` at its link position, unless a
     * local provisioning claims the name - a `Vendored` realises its archive, includes, and closure; an `Unmanaged`
@@ -351,15 +363,21 @@ object SNXPlugin extends AutoPlugin:
           case NativeRuntime.Darwin(_)                                 => Seq("-framework", name)
           case NativeRuntime.Linux(_, _) | NativeRuntime.Windows(_, _) => Seq.empty
 
-  /** Force a system library's `dynamic` tokens static, per platform: GNU brackets with `-Bstatic`/`-Bdynamic`; MSVC
-    * names the static `.lib` (its linker has no `-Bstatic`); macOS cannot force a `-l` static, so it fails fast.
+  /** Force a system library's `dynamic` tokens static, per platform: GNU and MinGW bracket with `-Bstatic`/`-Bdynamic`.
+    * MSVC has no `-Bstatic`, so `-l<name>` cannot force the static `.lib` over an import `.lib` - static selection there is
+    * by lib name, making `.linkage(Static)` a no-op, so it fails fast pointing at the static name. macOS cannot force a
+    * `-l` static either, so it fails fast pointing at a Vendored provisioning.
     */
   private def staticSystem(runtime: NativeRuntime, name: String, dynamic: Seq[String]): Seq[String] =
     runtime match
       case NativeRuntime.Linux(_, _) | NativeRuntime.Windows(_, ABI.MinGw) =>
         Seq("-Wl,-Bstatic") ++ dynamic ++ Seq("-Wl,-Bdynamic")
-      case NativeRuntime.Windows(_, ABI.Msvc) => dynamic
-      case NativeRuntime.Darwin(_)            =>
+      case NativeRuntime.Windows(_, ABI.Msvc) =>
+        fail(
+          SNXError.UnsupportedLinkage(
+            s"system library '$name' cannot be forced static on MSVC, whose linker has no -Bstatic; static selection is by " +
+              s"lib name, so name the static archive directly (for example NativeLibrary(\"${name}_static\")), or provision it Vendored"))
+      case NativeRuntime.Darwin(_) =>
         fail(
           SNXError.UnsupportedLinkage(
             s"system library '$name' cannot be linked statically on macOS; provision it as Vendored to supply a static archive"))
