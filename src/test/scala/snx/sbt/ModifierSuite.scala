@@ -20,6 +20,7 @@ package snx.sbt
 import snx.ABI
 import snx.Arch
 import snx.NativeRuntime
+import snx.SNXError
 
 class ModifierSuite extends munit.FunSuite:
 
@@ -34,10 +35,11 @@ class ModifierSuite extends munit.FunSuite:
     assertEquals(Modifier.wholeArchivePath(glibc, "/x.a"), Seq("-Wl,--whole-archive", "/x.a", "-Wl,--no-whole-archive"))
     assertEquals(Modifier.wholeArchivePath(mingw, "/x.a"), Seq("-Wl,--whole-archive", "/x.a", "-Wl,--no-whole-archive"))
 
-  test("wholeArchiveName renders the name-based whole-archive syntax where the linker provides one"):
+  test("wholeArchiveName renders the name-based whole-archive syntax where the linker provides one, and fails on macOS"):
     assertEquals(Modifier.wholeArchiveName(msvc, "foo"), Seq("-lfoo", "-Wl,/WHOLEARCHIVE:foo"))
     assertEquals(Modifier.wholeArchiveName(glibc, "foo"), Seq("-Wl,--whole-archive", "-lfoo", "-Wl,--no-whole-archive"))
-    assertEquals(Modifier.wholeArchiveName(darwin, "foo"), Seq.empty[String])
+    // macOS force-loads by archive path, not by name, so there is no name-based form to render.
+    intercept[SNXError.UnsupportedLinkage](Modifier.wholeArchiveName(darwin, "foo"))
 
   test("the File whole-archive applies on every platform"):
     val byFile = Modifier.wholeArchive(new java.io.File("x.a"))

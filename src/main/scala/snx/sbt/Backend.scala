@@ -120,7 +120,7 @@ private[sbt] object Backend:
         Seq("cmake", "--install", buildDir.getAbsolutePath, "--prefix", prefix.getAbsolutePath, "--config", buildType),
         "install",
         context.log)
-      val accept: String => Boolean = if shared then isShared else isArchive
+      val accept: String => Boolean = if shared then isShared(context.runtime) else isArchive(context.runtime)
       val libraries = prefix.allPaths.get().filter(file => file.isFile && accept(file.getName.nn))
       if libraries.isEmpty then
         fail(
@@ -150,9 +150,18 @@ private[sbt] object Backend:
     case "release-size" => "MinSizeRel"
     case _              => "Release"
 
-  private def isArchive(fileName: String): Boolean = fileName.endsWith(".a") || fileName.endsWith(".lib")
+  /** Whether `fileName` is a static archive for `runtime`: `.lib` on MSVC, `.a` elsewhere. Per-runtime so a Unix build
+    * does not accept a stray Windows import `.lib`, and vice versa.
+    */
+  private def isArchive(runtime: NativeRuntime)(fileName: String): Boolean = runtime match
+    case Windows(_, ABI.Msvc)                            => fileName.endsWith(".lib")
+    case Linux(_, _) | Darwin(_) | Windows(_, ABI.MinGw) => fileName.endsWith(".a")
 
-  private def isShared(fileName: String): Boolean = fileName.endsWith(".so") || fileName.endsWith(".dylib")
+  /** Whether `fileName` is a shared library for `runtime`: `.so` on Linux, `.dylib` on macOS, `.dll` on Windows. */
+  private def isShared(runtime: NativeRuntime)(fileName: String): Boolean = runtime match
+    case Linux(_, _)   => fileName.endsWith(".so")
+    case Darwin(_)     => fileName.endsWith(".dylib")
+    case Windows(_, _) => fileName.endsWith(".dll")
 
   private def fail(error: SNXError): Nothing = throw error // scalafix:ok DisableSyntax.throw
 

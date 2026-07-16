@@ -24,6 +24,7 @@ import snx.NativeRuntime
 import snx.NativeRuntime.Darwin
 import snx.NativeRuntime.Linux
 import snx.NativeRuntime.Windows
+import snx.SNXError
 
 /** A per-platform transform of a native configuration `A`, applied where it matches. See [[Modifier$ Modifier]]. */
 type Modifier[A] = PartialFunction[NativeRuntime, A => A]
@@ -47,5 +48,11 @@ object Modifier:
   private[sbt] def wholeArchiveName(runtime: NativeRuntime, name: String): Seq[String] = runtime match
     case Windows(_, ABI.Msvc)                => Seq(s"-l$name", s"-Wl,/WHOLEARCHIVE:$name")
     case Windows(_, ABI.MinGw) | Linux(_, _) => Seq("-Wl,--whole-archive", s"-l$name", "-Wl,--no-whole-archive")
-    case Darwin(_)                           => Seq.empty
+    case Darwin(_)                           =>
+      // macOS `-force_load` force-loads by archive path, not by `-l<name>`, so a whole-archive System library on macOS
+      // cannot be rendered by name - it needs a path. Fail fast rather than silently drop it (which would lose the
+      // force-load, and every symbol of a library referenced only for its constructors).
+      throw SNXError.UnsupportedLinkage( // scalafix:ok DisableSyntax.throw
+        s"whole-archive system library '$name' cannot be force-loaded by name on macOS; supply its archive path via " +
+          "Modifier.wholeArchive(file), or provision it Vendored (its built archive is force-loaded by path)")
 end Modifier
