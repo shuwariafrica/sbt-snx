@@ -33,12 +33,11 @@ import snx.NativeRuntime
 import snx.OS
 import snx.TargetPlatform
 
-/** The publishing coordinate of a native library, identifying the source of a [[Descriptor]]. */
+// The publishing coordinate (organization/name/version) identifying a Descriptor's source.
 final private[sbt] case class Module(organization: String, name: String, version: String) derives CanEqual
 
-/** A native library's link requirements for one platform pattern: the toolchain-neutral channels and a multithreading
-  * requirement. See [[Usage$ Usage]].
-  */
+// A native library's link requirements for one platform pattern: the toolchain-neutral channels and a multithreading
+// requirement.
 final private[sbt] case class Usage(
   libraries: Seq[String],
   frameworks: Seq[String],
@@ -48,10 +47,8 @@ final private[sbt] case class Usage(
   requiresMultithreading: Boolean
 ) derives CanEqual:
 
-  /** Whether this declares no requirement. */
   def isEmpty: Boolean = this == Usage.empty
 
-  /** Combine two requirements. */
   @targetName("combine") def ++(that: Usage): Usage =
     Usage(
       libraries ++ that.libraries,
@@ -62,51 +59,39 @@ final private[sbt] case class Usage(
       requiresMultithreading || that.requiresMultithreading
     )
 
-  /** This requirement with each channel de-duplicated, first occurrence kept. */
+  // De-duplicate each channel, keeping the first occurrence.
   def distinct: Usage =
     Usage(libraries.distinct, frameworks.distinct, wholeArchive.distinct, defines.distinct, linkFlags.distinct, requiresMultithreading)
 end Usage
 
-/** Constructors and the empty value for [[Usage]], composed with `++`. */
 private[sbt] object Usage:
 
-  /** The empty requirement. */
   def apply(): Usage = empty
 
-  /** The empty requirement. */
   val empty: Usage = Usage(Nil, Nil, Nil, Nil, Nil, false)
 
-  /** System libraries to link (`-l<name>`). */
   def libraries(name: String*): Usage = empty.copy(libraries = name.toSeq)
 
-  /** macOS frameworks to link. */
   def frameworks(name: String*): Usage = empty.copy(frameworks = name.toSeq)
 
-  /** Libraries to whole-archive. */
   def wholeArchive(name: String*): Usage = empty.copy(wholeArchive = name.toSeq)
 
-  /** Preprocessor defines (`-D<name>`) for the consumer's C. */
   def defines(name: String*): Usage = empty.copy(defines = name.toSeq)
 
-  /** Raw linker flags. */
   def linkFlags(flag: String*): Usage = empty.copy(linkFlags = flag.toSeq)
 
-  /** Requires multithreading. */
   val multithreaded: Usage = empty.copy(requiresMultithreading = true)
 end Usage
 
-/** A native library's per-platform usage descriptor, keyed by platform pattern (`*`, `<os>`, `<os>-<arch>`, or
-  * `<os>-<arch>-<env>`). See [[Descriptor$ Descriptor]].
-  */
+// A native library's per-platform usage descriptor, keyed by platform pattern (`*`, `<os>`, `<os>-<arch>`, or
+// `<os>-<arch>-<env>`).
 final private[sbt] case class Descriptor(module: Module, usage: Map[String, Usage]) derives CanEqual
 
-/** Codecs, byte-stable rendering, and the producer/consumer logic for [[Descriptor]]. */
 private[sbt] object Descriptor:
 
-  /** The descriptor schema version. */
   inline val schemaVersion = 1
 
-  /** The descriptor resource path within a published jar. */
+  // The descriptor's path within a published jar.
   final val resourcePath = "META-INF/scala-native/native.json"
 
   private given JsonFormat[Module] = new JsonFormat[Module]:
@@ -172,24 +157,22 @@ private[sbt] object Descriptor:
         Descriptor(module, usage)
       case None => deserializationError("expected a descriptor object")
 
-  /** Render `descriptor` to byte-stable JSON: fixed field order, patterns sorted, empty channels omitted. */
+  // Render to byte-stable JSON: fixed field order, patterns sorted, empty channels omitted - so an unchanged descriptor
+  // is byte-identical across rebuilds.
   def render(descriptor: Descriptor): String = CompactPrinter(Converter.toJsonUnsafe(descriptor))
 
-  /** Parse a descriptor from its JSON text. */
   def parse(text: String): Descriptor = Converter.fromJsonUnsafe[Descriptor](Parser.parseUnsafe(text))
 
-  /** Build the descriptor a library publishes: evaluate `requirements` over the platforms the jar serves (the
-    * `target`'s [[snx.ABI ABI]] variants when `classified`, else every platform), de-duplicate, then collapse to the
-    * broadest pattern per shared requirement.
-    */
+  // Build the descriptor a library publishes: evaluate `requirements` over the platforms the jar serves (the target's
+  // ABI variants when `classified`, else every platform), de-duplicate, then collapse to the broadest pattern per
+  // shared requirement.
   def build(module: Module, classified: Boolean, target: TargetPlatform, requirements: PartialFunction[NativeRuntime, Usage]): Descriptor =
     val runtimes = if classified then NativeRuntime.variants(target) else TargetPlatform.all.flatMap(NativeRuntime.variants)
     val declared = runtimes.flatMap(runtime => requirements.lift(runtime).map(_.distinct).filterNot(_.isEmpty).map(runtime -> _)).toMap
     Descriptor(module, collapse(declared))
 
-  /** Fold the descriptors on a consumer's classpath into the requirement for `runtime`: each resolves
-    * most-specific-per-field, combined in dependency order, channels de-duplicated.
-    */
+  // Fold the descriptors on a consumer's classpath into the requirement for `runtime`: each resolves
+  // most-specific-per-field, combined in dependency order, channels de-duplicated.
   def fold(descriptors: Seq[Descriptor], runtime: NativeRuntime): Usage =
     descriptors.map(descriptor => resolve(descriptor.usage, runtime)).foldLeft(Usage.empty)(_ ++ _).distinct
 
