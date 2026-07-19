@@ -95,15 +95,23 @@ class ConfigSuite extends munit.FunSuite:
   private val archivePath = archive.getAbsolutePath.nn
   private val shared = new java.io.File("/x/lib/libfoo.so")
   private val sharedDir = shared.getParentFile.nn.getAbsolutePath.nn
-  // Mirrors a real backend: a Static request yields an archive, a Dynamic one a shared library.
-  private val stub: (Vendored, Linkage) => Artefacts =
-    (_, linkage) => if linkage == Linkage.Static then Artefacts(Seq(archive), Seq.empty) else Artefacts(Seq(shared), Seq.empty)
+  // Mirrors a real backend: a Static request yields an archive, a Dynamic one a shared library; `true` = built this run.
+  private val stub: (Vendored, Linkage) => (Artefacts, Boolean) =
+    (_, linkage) => (if linkage == Linkage.Static then Artefacts(Seq(archive), Seq.empty) else Artefacts(Seq(shared), Seq.empty), true)
   private def vendored = NativeLibrary("foo", Vendored.local("vendor/foo").cmake("foo"))
 
   test("the rebind renders an unprovisioned default -l, replaces a vendored name with its archive, keeps link order"):
     val requirements = Usage(Seq("a", "foo", "b"), Nil, Nil, Nil, Nil, false)
     val (config, _) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("foo" -> vendored), glibc, stub)
     assertEquals(config.linkingOptions, Seq("-la", archivePath, "-lb"))
+
+  test("the rebind reports whether a vendored library was built this run or served from the cache"):
+    val requirements = Usage(Seq("foo"), Nil, Nil, Nil, Nil, false)
+    val cached: (Vendored, Linkage) => (Artefacts, Boolean) = (_, _) => (Artefacts(Seq(archive), Seq.empty), false)
+    val (_, builtReport) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("foo" -> vendored), glibc, stub)
+    val (_, cachedReport) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("foo" -> vendored), glibc, cached)
+    assert(builtReport.exists(_.contains("vendored, built")), s"expected a 'built' report, got $builtReport")
+    assert(cachedReport.exists(_.contains("vendored, cache hit")), s"expected a 'cache hit' report, got $cachedReport")
 
   test("the rebind whole-archives a vendored archive in WholeArchive mode and the platform's linker syntax"):
     val requirements = Usage(Nil, Nil, Seq("foo"), Nil, Nil, false)

@@ -87,7 +87,13 @@ sealed trait Origin derives CanEqual:
 
   /** Build with a user-supplied function from [[BuildContext]] to [[Artefacts]], writing outputs under the context's
     * staging directory and honouring its [[Linkage]] (an archive for `Static`, a shared library for `Dynamic`).
-    * `token` keys the cache; change it when the build logic changes.
+    *
+    * `token` is the build's cache identity, and it is your responsibility. This function is opaque to snx, so the cache
+    * keys on `token` alone - the source content, the toolchain, and the resolved runtime/linkage/mode are tracked for
+    * you, but a change to the function's OWN logic is invisible. Change `token` on every change to the build (a flag, a
+    * target, the recipe); otherwise a warm cache silently reuses the previous archive and a green build links a stale
+    * one. Deriving `token` from the build's inputs - a version suffix you bump, or the flags folded into the string -
+    * keeps it honest.
     */
   def command(token: String)(build: BuildContext => Artefacts): Vendored =
     new Vendored(this, Backend.Command(token, build), PartialFunction.empty)
