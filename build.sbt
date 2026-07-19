@@ -53,7 +53,13 @@ def packageSettings: Seq[Def.Setting[?]] = Seq(
 def scriptedSettings: Seq[Def.Setting[?]] = Seq(
   scriptedLaunchOpts ++= Seq("classifier", "os", "env").flatMap { axis =>
     sys.env.get(s"SNX_EXPECT_${axis.toUpperCase}").map(value => s"-Dsnx.expect.$axis=$value")
-  } ++ Seq("-Xmx3G", "-Xss2M", s"-Dplugin.version=${version.value}", s"-Duser.home=${sys.props.getOrElse("user.home", "")}"),
+  } ++ Seq(
+    "-Xmx3G",
+    "-Xss2M",
+    s"-Dplugin.version=${version.value}",
+    s"-Dmunit.version=${Dependencies.munit.revision}",
+    s"-Duser.home=${sys.props.getOrElse("user.home", "")}"
+  ),
   scriptedBufferLog := false,
   scripted / excludeFilter := {
     val os = sys.env.get("SNX_EXPECT_OS")
