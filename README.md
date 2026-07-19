@@ -192,8 +192,9 @@ SNX.libraries += NativeLibrary(
 ```
 
 `local(directory)` builds a directory under the project (resolved against the project, then the build root);
-`git(uri, ref)` clones a Git repository at a `ref` (a tag, commit, or branch; a branch is frozen on first clone, so
-pin a tag or commit for a reproducible build). `cmake` configures, builds, installs, and collects **every** library and
+`git(uri, ref)` clones a Git repository at a `ref` (a tag, commit, or branch), resolving the ref to its current commit
+and caching on that commit, so moving a branch or force-moving a tag rebuilds - a full commit SHA needs no resolution,
+pin one for a network-free, fully reproducible build. `cmake` configures, builds, installs, and collects **every** library and
 header under the install prefix - not only the `targets` you name, but whatever the project's `install()` rules emit, so
 a multi-library project (aws-lc installs both `libssl` and `libcrypto`) contributes them all; scope the project's install
 (or its `targets`) to what you need. It builds them static or shared per the library's `.linkage` (`BUILD_SHARED_LIBS` is
@@ -202,13 +203,14 @@ as `cmake(targets, flags)`. `options` adds the library's per-platform link closu
 the transitive `-l`/flags/defines a static archive cannot carry itself - applied at this provisioning site and never
 published (distinct from the CMake configure `flags`). The build runs in a normal toolchain environment, so a
 CMakeLists using `find_package` or a toolchain file behaves as it does standalone. Builds are cached locally, keyed on
-the source (a `local` directory's content hash, or a `git` origin's `uri@ref` string - not the fetched content, so a
-moving branch or force-moved tag is not picked up: pin a stable commit or tag), the configuration, and the resolved
-toolchain.
+the source (a `local` directory's content hash, or a `git` origin's resolved commit - the ref is resolved via
+`git ls-remote`, so a moving branch or force-moved tag rebuilds; when the remote is unreachable the cache falls back to
+the ref), the configuration, and the resolved toolchain.
 
-The CMake backend builds with CMake's default toolchain, which matches the Scala Native link on Linux, macOS, and the
-MSVC Windows toolchain. It is not supported on Windows MinGW - MSVC is the supported Windows toolchain - so a vendored
-CMake library there fails the build with a clear error rather than producing an unlinkable archive.
+On Linux and macOS the CMake backend builds with the same clang the Scala Native link uses (honouring an `SNX.clang`
+override); on Windows it uses CMake's default MSVC toolchain, which is ABI-compatible with the Scala Native link. It is
+not supported on Windows MinGW - MSVC is the supported Windows toolchain - so a vendored CMake library there fails the
+build with a clear error rather than producing an unlinkable archive.
 
 For a build CMake does not cover - Make, Autotools, a hand-rolled script - `command(token) { ctx => ... }` is the
 escape hatch: the function builds from `ctx.source` into `ctx.staging` and returns the archives and header directories
@@ -221,8 +223,9 @@ A vendored build is cached locally only (`CacheLevelTag.Local`) - a compiled arc
 so it is never shared through a remote cache. A fresh CI runner therefore rebuilds each vendored library from source
 unless you persist the sbt local cache store (the `SBT_LOCAL_CACHE` directory, for example `~/.cache/sbt`) between runs.
 Doing so turns an expensive source build - an aws-lc or similar - from minutes per matrix cell into seconds, and it is
-safe: the cache key includes the resolved toolchain (the compilers and their versions, and `cmake`), so a runner-image
-or compiler change misses and rebuilds rather than reusing a stale archive.
+safe: the cache key includes the resolved toolchain (the compilers and their versions, `cmake`, and the ambient
+`CFLAGS`/`CXXFLAGS`/`CPPFLAGS`), so a runner-image or compiler change misses and rebuilds rather than reusing a stale
+archive.
 
 ## Other link requirements
 

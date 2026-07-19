@@ -1,0 +1,11 @@
+# A vendored Git source pinned to a moving branch. setupDev creates a local repo (offline, no network) where branch
+# `dev` returns 1; `run 1` links and asserts it. moveDev advances `dev` to return 2; after `reload` (which clears
+# sbt's in-session config memoisation - the action cache persists on disk, exactly as vendored/cache relies on) `run 2`
+# must reflect the move. The plugin resolves the branch to its current commit and keys the vendored cache on that
+# commit, so the moved branch is a cache miss and rebuilds. A stale-frozen (uri@ref) key would reuse the first archive
+# and `run 2` would fail asserting 1 != 2.
+> setupDev
+> run 1
+> moveDev
+> reload
+> run 2
