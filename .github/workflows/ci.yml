@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  SBT_OPTS: "-Xmx7G -Xss4M -XX:ReservedCodeCacheSize=512M"
+  SBT_OPTS: "-Xmx7G -Xss4M -XX:ReservedCodeCacheSize=512M -Dsbt.server.autostart=false"
   JDK_VERSION: "17"
   LLVM_VERSION: "22"
 

@@ -56,6 +56,10 @@ def scriptedSettings: Seq[Def.Setting[?]] = Seq(
   } ++ Seq(
     "-Xmx3G",
     "-Xss2M",
+    // Each scripted test boots a fresh sbt. On Windows on arm64 sbt's boot server named pipe intermittently fails to
+    // construct (`Win32NamedPipeServerSocket`, error 1336 - ERROR_INVALID_DACL) and the no-console boot then exits 2,
+    // failing an unrelated test. Scripted runs in batch and never uses the server, so disable it to skip the pipe.
+    "-Dsbt.server.autostart=false",
     s"-Dplugin.version=${version.value}",
     s"-Dmunit.version=${Dependencies.munit.revision}",
     s"-Duser.home=${sys.props.getOrElse("user.home", "")}"
