@@ -112,6 +112,11 @@ object SNXPlugin extends AutoPlugin:
   // Test adapters opened by `loadedTestFrameworks`, closed when the enclosing sbt task completes.
   private val adapters = new AtomicReference[List[TestAdapter]](Nil)
 
+  // Serialises vendored builds that resolve to the same cache key. The action cache de-duplicates SEQUENTIAL
+  // identical-key builds, not CONCURRENT ones - N modules provisioning the same library on a cold cache each see a
+  // miss and build it - so a per-key lock collapses them to one build, the rest reading the now-warm cache.
+  private val buildLocks = new AtomicReference[Map[List[String], Object]](Map.empty)
+
   override def globalSettings: Seq[Setting[?]] = Seq(
     concurrentRestrictions += Tags.limit(linkTag, 1),
     onComplete := {
@@ -154,9 +159,8 @@ object SNXPlugin extends AutoPlugin:
     ) ++ classifiedPublish ++ inConfig(Compile)(relativization ++ pathSettings ++ nativeSettings(testConfig = false)) ++
       inConfig(Test)(relativization ++ pathSettings ++ nativeSettings(testConfig = true) ++ testSettings)
 
-  /** Add the Scala Native compiler plugin (JVM-pinned: it is a JVM plugin, not a native artefact) and the runtime
-    * libraries, excluding the `_2.13`-cross standard libraries.
-    */
+  // Add the Scala Native compiler plugin (JVM-pinned: it is a JVM plugin, not a native artefact) and the runtime
+  // libraries, excluding the `_2.13`-cross standard libraries.
   private def nativeDependencies: Seq[Setting[?]] = Seq(
     libraryDependencies ++= {
       val org = "org.scala-native"
@@ -173,7 +177,7 @@ object SNXPlugin extends AutoPlugin:
     }
   )
 
-  /** Relativise NIR source positions so the compiled output embeds no absolute paths, per configuration. */
+  // Relativise NIR source positions so the compiled output embeds no absolute paths, per configuration.
   private def relativization: Seq[Setting[?]] = Seq(
     compile / scalacOptions += {
       val paths = sourceDirectories.value.map(_.getAbsolutePath.nn).mkString(";")
@@ -181,27 +185,25 @@ object SNXPlugin extends AutoPlugin:
     }
   )
 
-  /** Inject the per-platform source and resource directories (`scalanative-<os>`/`-<os>-<arch>`,
-    * `resources-<os>`/`-<os>-<arch>`) for the enclosing configuration; only the resolved target's contribute.
-    */
+  // Inject the per-platform source and resource directories (`scalanative-<os>`/`-<os>-<arch>`,
+  // `resources-<os>`/`-<os>-<arch>`) for the enclosing configuration; only the resolved target's contribute.
   private def pathSettings: Seq[Setting[?]] = Seq(
     unmanagedSourceDirectories ++= perPlatformDirs(sourceDirectory.value, "scalanative", SNX.target.value),
     unmanagedResourceDirectories ++= perPlatformDirs(sourceDirectory.value, "resources", SNX.target.value)
   )
 
-  /** The `<prefix>-<os>` and `<prefix>-<os>-<arch>` siblings under a configuration's source directory. */
+  // The `<prefix>-<os>` and `<prefix>-<os>-<arch>` siblings under a configuration's source directory.
   private def perPlatformDirs(directory: File, prefix: String, target: TargetPlatform): Seq[File] =
     Seq(target.os.token, target.classifier).map(suffix => new File(directory, s"$prefix-$suffix"))
 
-  /** The native configuration, link, and `run` settings shared by the Compile and Test configurations. */
+  // The native configuration, link, and `run` settings shared by the Compile and Test configurations.
   private def nativeSettings(testConfig: Boolean): Seq[Setting[?]] =
     configSettings(testConfig) ++ linkSettings(testConfig) ++ runSettings
 
-  /** Fold the resolved native configuration: the discovered toolchain base, the scalar settings, the propagated link
-    * requirements (the project's own [[ownRequirements]] plus the link classpath's descriptors, de-duplicated), then
-    * the platform-matched modifiers, applied last. The main link resolves the Runtime classpath, a test link the Test
-    * classpath.
-    */
+  // Fold the resolved native configuration: the discovered toolchain base, the scalar settings, the propagated link
+  // requirements (the project's own ownRequirements plus the link classpath's descriptors, de-duplicated), then the
+  // platform-matched modifiers, applied last. The main link resolves the Runtime classpath, a test link the Test
+  // classpath.
   private def configSettings(testConfig: Boolean): Seq[Setting[?]] = Seq(
     SNX.config := Def.uncached {
       val runtime = SNX.runtime.value
@@ -256,9 +258,8 @@ object SNXPlugin extends AutoPlugin:
     }
   )
 
-  /** The project's own requirements as a wire `Usage`: each library's name in its [[LinkMode]] channel, plus the
-    * [[Flags]] residual.
-    */
+  // The project's own requirements as a wire Usage: each library's name in its LinkMode channel, plus the Flags
+  // residual.
   private[sbt] def ownRequirements(libraries: Seq[NativeLibrary], flags: Flags): Usage =
     val plain = libraries.collect { case l if l.mode == LinkMode.Plain => l.name }
     val frameworks = libraries.collect { case l if l.mode == LinkMode.Framework => l.name }
@@ -270,11 +271,10 @@ object SNXPlugin extends AutoPlugin:
   private val mainConfigs = Set("compile", "runtime")
   private val testConfigs = Set("compile", "runtime", "test")
 
-  /** Whether `library` is visible at a link over `configs`. */
   private[sbt] def visible(library: NativeLibrary, configs: Set[String]): Boolean =
     library.configurations.forall(spec => spec.split(",").nn.iterator.flatMap(Option(_)).exists(name => configs.contains(name.trim.nn)))
 
-  /** Fail when a `noSystemDefault` library is left System-provisioned, catching it at configuration time. */
+  // Fail when a `noSystemDefault` library is left System-provisioned, catching it at configuration time.
   private[sbt] def requireProvisioned(libraries: Seq[NativeLibrary]): Unit =
     libraries.foreach: library =>
       if !library.systemDefault && library.provisioning == Provisioning.System then
@@ -282,9 +282,8 @@ object SNXPlugin extends AutoPlugin:
           SNXError.UnprovisionedLibrary(
             s"native library '${library.name}' has no system default; provision it (Vendored or Unmanaged) in SNX.libraries"))
 
-  /** Fail when an `Unmanaged` library carries a linkage that resolves for `runtime`: its source is compiled into the
-    * binary, so a link linkage is meaningless. A per-platform selector that does not match `runtime` is a no-op.
-    */
+  // Fail when an `Unmanaged` library carries a linkage that resolves for `runtime`: its source is compiled into the
+  // binary, so a link linkage is meaningless. A per-platform selector that does not match `runtime` is a no-op.
   private[sbt] def requireLinkageApplicable(libraries: Seq[NativeLibrary], runtime: NativeRuntime): Unit =
     libraries.foreach: library =>
       if library.provisioning == Provisioning.Unmanaged && library.linkage.isDefinedAt(runtime) then
@@ -293,10 +292,9 @@ object SNXPlugin extends AutoPlugin:
             s"native library '${library.name}' is Unmanaged - its source is compiled into the binary, so a link linkage does " +
               "not apply; remove the .linkage"))
 
-  /** Fold the resolved requirements onto `base`: each renders its default `-l<name>` at its link position, unless a
-    * local provisioning claims the name - a `Vendored` realises its archive, includes, and closure; an `Unmanaged`
-    * suppresses the default. The [[Flags]] residual follows. Returns the configuration and the reconciliation report.
-    */
+  // Fold the resolved requirements onto `base`: each renders its default `-l<name>` at its link position, unless a
+  // local provisioning claims the name - a Vendored realises its archive, includes, and closure; an Unmanaged
+  // suppresses the default. The Flags residual follows. Returns the configuration and the reconciliation report.
   private[sbt] def rebind(
     base: NativeConfig,
     requirements: Usage,
@@ -334,15 +332,14 @@ object SNXPlugin extends AutoPlugin:
     (applyFlags(withLibraries, Flags(requirements.defines, requirements.linkFlags, false)), report.result())
   end rebind
 
-  /** The linkage a provisioning defaults to when a library declares none: `System` dynamic, `Vendored` static. */
+  // The linkage a provisioning defaults to when a library declares none: System dynamic, Vendored static.
   private[sbt] def provisioningDefault(provisioning: Provisioning): Linkage = provisioning match
     case Provisioning.System      => Linkage.Dynamic
     case Provisioning.Vendored(_) => Linkage.Static
     case Provisioning.Unmanaged   => Linkage.Dynamic
 
-  /** The link tokens for a system library `name` in its link mode and linkage, rendered per platform. A dynamic
-    * library is a plain `-l<name>`, framework flag, or name whole-archive; a static one forces that static.
-    */
+  // The link tokens for a system library `name` in its link mode and linkage, rendered per platform. A dynamic library
+  // is a plain `-l<name>`, framework flag, or name whole-archive; a static one forces that static.
   private[sbt] def systemLink(runtime: NativeRuntime, mode: LinkMode, linkage: Linkage, name: String): Seq[String] =
     val dynamic = dynamicSystemLink(runtime, mode, name)
     linkage match
@@ -353,7 +350,7 @@ object SNXPlugin extends AutoPlugin:
             fail(SNXError.UnsupportedLinkage(s"native framework '$name' cannot be linked statically"))
           case LinkMode.Plain | LinkMode.WholeArchive => staticSystem(runtime, name, dynamic)
 
-  /** A system library's dynamic link tokens: `-l<name>`, the macOS framework flag, or the name whole-archive form. */
+  // A system library's dynamic link tokens: `-l<name>`, the macOS framework flag, or the name whole-archive form.
   private def dynamicSystemLink(runtime: NativeRuntime, mode: LinkMode, name: String): Seq[String] =
     mode match
       case LinkMode.Plain        => Seq("-l" + name)
@@ -363,11 +360,10 @@ object SNXPlugin extends AutoPlugin:
           case NativeRuntime.Darwin(_)                                 => Seq("-framework", name)
           case NativeRuntime.Linux(_, _) | NativeRuntime.Windows(_, _) => Seq.empty
 
-  /** Force a system library's `dynamic` tokens static, per platform: GNU and MinGW bracket with `-Bstatic`/`-Bdynamic`.
-    * MSVC has no `-Bstatic`, so `-l<name>` cannot force the static `.lib` over an import `.lib` - static selection there is
-    * by lib name, making `.linkage(Static)` a no-op, so it fails fast pointing at the static name. macOS cannot force a
-    * `-l` static either, so it fails fast pointing at a Vendored provisioning.
-    */
+  // Force a system library's `dynamic` tokens static, per platform: GNU and MinGW bracket with `-Bstatic`/`-Bdynamic`.
+  // MSVC has no `-Bstatic`, so `-l<name>` cannot force the static `.lib` over an import `.lib` - static selection there
+  // is by lib name, making `.linkage(Static)` a no-op, so it fails fast pointing at the static name. macOS cannot force
+  // a `-l` static either, so it fails fast pointing at a Vendored provisioning.
   private def staticSystem(runtime: NativeRuntime, name: String, dynamic: Seq[String]): Seq[String] =
     runtime match
       case NativeRuntime.Linux(_, _) | NativeRuntime.Windows(_, ABI.MinGw) =>
@@ -382,12 +378,11 @@ object SNXPlugin extends AutoPlugin:
           SNXError.UnsupportedLinkage(
             s"system library '$name' cannot be linked statically on macOS; provision it as Vendored to supply a static archive"))
 
-  /** The link tokens for a vendored library's built files, per linkage. A `Static` build links its archive(s) by path
-    * ([[archiveLink]]); a `Dynamic` build links `-l<name>` against the built shared library and adds its directory to
-    * the link and runtime search paths (`-L`, `-rpath`) - a system dynamic link plus the build's own search path, the
-    * target supplying the shared library at runtime. The infeasible dynamic combinations are rejected before the build
-    * by [[requireDynamicVendorable]], so only the feasible ones are rendered here.
-    */
+  // The link tokens for a vendored library's built files, per linkage. A Static build links its archive(s) by path
+  // (archiveLink); a Dynamic build links `-l<name>` against the built shared library and adds its directory to the link
+  // and runtime search paths (`-L`, `-rpath`) - a system dynamic link plus the build's own search path, the target
+  // supplying the shared library at runtime. The infeasible dynamic combinations are rejected before the build by
+  // requireDynamicVendorable, so only the feasible ones are rendered here.
   private def vendoredLink(runtime: NativeRuntime, mode: LinkMode, linkage: Linkage, name: String, libraries: Seq[File]): Seq[String] =
     linkage match
       case Linkage.Static  => archiveLink(runtime, mode, libraries)
@@ -395,10 +390,9 @@ object SNXPlugin extends AutoPlugin:
         val dirs = libraries.map(_.getParentFile.nn.getAbsolutePath.nn).distinct
         dynamicSystemLink(runtime, mode, name) ++ dirs.flatMap(dir => Seq("-L" + dir) ++ runtimeSearch(runtime, dir))
 
-  /** Reject the infeasible dynamic-linkage requests for a vendored library before it is built: whole-archive is a
-    * static-archive operation, and a dynamically-linked vendored library on Windows needs DLL redistribution (a
-    * follow-on). The feasible cases - `Plain`/`Framework` on Linux or macOS - pass.
-    */
+  // Reject the infeasible dynamic-linkage requests for a vendored library before it is built: whole-archive is a
+  // static-archive operation, and a dynamically-linked vendored library on Windows needs DLL redistribution (a
+  // follow-on). The feasible cases - Plain/Framework on Linux or macOS - pass.
   private def requireDynamicVendorable(runtime: NativeRuntime, mode: LinkMode, name: String): Unit =
     mode match
       case LinkMode.WholeArchive =>
@@ -414,42 +408,38 @@ object SNXPlugin extends AutoPlugin:
             s"dynamically linking the vendored native library '$name' on Windows requires DLL redistribution, a follow-on; " +
               "link it statically, or declare it System to link a host-provided library"))
 
-  /** The runtime search-path tokens so a dynamically-linked vendored library is found when the binary runs on the build
-    * host (its tests and local `run`): an `-rpath` entry pointing at the build directory. PROVEN on Linux; the macOS
-    * `-rpath` is emitted but not yet CI-verified (no local mac host - CMake's default `@rpath` install names, `CMP0042`,
-    * are expected to resolve it). Windows has no `-rpath`, so a dynamically-linked vendored DLL is rejected earlier
-    * ([[requireDynamicVendorable]]).
-    */
+  // The runtime search-path tokens so a dynamically-linked vendored library is found when the binary runs on the build
+  // host (its tests and local `run`): an `-rpath` entry pointing at the build directory. PROVEN on Linux; the macOS
+  // `-rpath` is emitted but not yet CI-verified (no local mac host - CMake's default `@rpath` install names, CMP0042,
+  // are expected to resolve it). Windows has no `-rpath`, so a dynamically-linked vendored DLL is rejected earlier
+  // (requireDynamicVendorable).
   private def runtimeSearch(runtime: NativeRuntime, dir: String): Seq[String] = runtime match
     case NativeRuntime.Linux(_, _) | NativeRuntime.Darwin(_) => Seq("-Wl,-rpath," + dir)
     case NativeRuntime.Windows(_, _)                         => Seq.empty
 
-  /** The link tokens for a vendored library's built static archives, in its link-mode syntax. */
+  // The link tokens for a vendored library's built static archives, in its link-mode syntax.
   private def archiveLink(runtime: NativeRuntime, mode: LinkMode, archives: Seq[File]): Seq[String] =
     mode match
       case LinkMode.WholeArchive => archives.flatMap(archive => Modifier.wholeArchivePath(runtime, archive.getAbsolutePath.nn))
       case LinkMode.Plain | LinkMode.Framework => archives.map(_.getAbsolutePath.nn)
 
-  /** A short label for a linkage, for the reconciliation diagnostic. */
   private def linkageLabel(linkage: Linkage): String = linkage match
     case Linkage.Static  => "static"
     case Linkage.Dynamic => "dynamic"
 
-  /** Append `flags`' link flags and `-D` defines onto `config` (multithreading is enforced separately,
-    * [[enforceMultithreading]]).
-    */
+  // Append `flags`' link flags and `-D` defines onto `config`; multithreading is enforced separately
+  // (enforceMultithreading).
   private def applyFlags(config: NativeConfig, flags: Flags): NativeConfig =
     Contribution.merge(config, Contribution.empty.linkOptions(flags.linkFlags*).define(flags.defines*))
 
-  /** Bind [[SNXImports.SNX.link]] to the tagged link task; uncached because the result is a `File`. */
+  // Bind SNX.link to the tagged link task; uncached because the result is a File.
   private def linkSettings(testConfig: Boolean): Seq[Setting[?]] = Seq(
     SNX.link := Def.uncached(linkTask(testConfig).value)
   )
 
-  /** Link the Scala Native binary: assemble the toolchain `Config` over the resolved [[SNXImports.SNX.config]] and
-    * drive the Scala Native build inside a fresh `Scope`. A test binary links `TestMain` as an application; a main
-    * binary links the deliverable. Tagged to serialise concurrent links.
-    */
+  // Link the Scala Native binary: assemble the toolchain Config over the resolved SNX.config and drive the Scala Native
+  // build inside a fresh Scope. A test binary links `TestMain` as an application; a main binary links the deliverable.
+  // Tagged to serialise concurrent links.
   private def linkTask(testConfig: Boolean): Def.Initialize[Task[File]] =
     Def
       .uncachedTask {
@@ -472,9 +462,8 @@ object SNXPlugin extends AutoPlugin:
       }
       .tag(linkTag)
 
-  /** Override `run` to execute the linked binary with the configured environment, and reject `runMain` (a native
-    * binary has a single entry point).
-    */
+  // Override `run` to execute the linked binary with the configured environment, and reject `runMain` (a native binary
+  // has a single entry point).
   private def runSettings: Seq[Setting[?]] = Seq(
     run := Def.inputTask {
       val arguments = Def.spaceDelimited("<arg>").parsed
@@ -491,10 +480,9 @@ object SNXPlugin extends AutoPlugin:
     }.evaluated
   )
 
-  /** Route the Test configuration's test frameworks through the linked native test binary. Overriding
-    * `loadedTestFrameworks` (rather than `test`) keeps sbt's own selection and reporting; `definedTestNames` is
-    * re-triggered off it so a plain `Test / compile` does not link the test binary.
-    */
+  // Route the Test configuration's test frameworks through the linked native test binary. Overriding
+  // `loadedTestFrameworks` (rather than `test`) keeps sbt's own selection and reporting; `definedTestNames` is
+  // re-triggered off it so a plain `Test / compile` does not link the test binary.
   private def testSettings: Seq[Setting[?]] = Seq(
     loadedTestFrameworks := Def.uncached {
       if fork.value then fail(SNXError.TestForkUnsupported("Test / fork must be false for a Scala Native project."))
@@ -515,16 +503,14 @@ object SNXPlugin extends AutoPlugin:
       .value
   )
 
-  /** Abort the enclosing task by raising the typed `error`. */
   private def fail(error: SNXError): Nothing =
     throw error // scalafix:ok DisableSyntax.throw
 
-  /** Register a test adapter for closure when the enclosing sbt task completes (see `onComplete`). */
+  // Register a test adapter for closure when the enclosing sbt task completes (see `onComplete`).
   private def register(adapter: TestAdapter): TestAdapter =
     val _ = adapters.updateAndGet(opened => adapter :: opened)
     adapter
 
-  /** Bridge an sbt logger to a Scala Native build logger. */
   private def nativeLogger(log: sbt.util.Logger): NativeLogger =
     NativeLogger(
       (throwable: Throwable) => log.trace(throwable),
@@ -534,11 +520,10 @@ object SNXPlugin extends AutoPlugin:
       (message: String) => log.error(message)
     )
 
-  /** Resolve a deliverable and main class into the build target and main class. Fails fast for an unlinked `NIR` or a
-    * missing `Executable` main class. The build target follows the deliverable alone - a `Library.Static` archives, a
-    * `Library.Shared` links a shared object, an `Executable` links an application; the static C runtime is a separate
-    * opt-in ([[SNXImports.SNX.staticRuntime]]), and the test binary is always an application.
-    */
+  // Resolve a deliverable and main class into the build target and main class. Fails fast for an unlinked NIR or a
+  // missing Executable main class. The build target follows the deliverable alone - a Library.Static archives, a
+  // Library.Shared links a shared object, an Executable links an application; the static C runtime is a separate opt-in
+  // (SNX.staticRuntime), and the test binary is always an application.
   private[sbt] def resolveTarget(deliverable: Deliverable, main: Option[String]): (BuildTarget, Option[String]) =
     deliverable match
       case Deliverable.NIR =>
@@ -549,13 +534,12 @@ object SNXPlugin extends AutoPlugin:
         if main.isEmpty then fail(SNXError.MissingMainClass("an Executable deliverable requires a main class"))
         else (BuildTarget.application, main)
 
-  /** Derive the resolved `ModuleID`: a classified dependency resolves under the target's OS/arch classifier. */
+  // A classified dependency resolves under the target's OS/arch classifier; an unclassified one resolves as declared.
   private[sbt] def derive(target: TargetPlatform, dependency: NativeDependency): ModuleID =
     if dependency.classified then dependency.module.classifier(target.classifier) else dependency.module
 
-  /** The project's own exported requirements per runtime: its main-visible `SNX.libraries` names and modes plus the
-    * `SNX.flags` residual. Test-only and `Unmanaged` libraries are excluded.
-    */
+  // The project's own exported requirements per runtime: its main-visible `SNX.libraries` names and modes plus the
+  // `SNX.flags` residual. Test-only and Unmanaged libraries are excluded.
   private def exportedRequirements(
     libraries: PartialFunction[NativeRuntime, Seq[NativeLibrary]],
     flags: PartialFunction[NativeRuntime, Flags]): PartialFunction[NativeRuntime, Usage] = { case runtime =>
@@ -565,9 +549,8 @@ object SNXPlugin extends AutoPlugin:
     ownRequirements(exported, flags.applyOrElse(runtime, (_: NativeRuntime) => Flags.empty))
   }
 
-  /** Write the NIR deliverable's descriptor as a managed resource, byte-stably and only when its content changes. A
-    * non-NIR deliverable or an empty requirement set writes nothing.
-    */
+  // Write the NIR deliverable's descriptor as a managed resource, byte-stably and only when its content changes. A
+  // non-NIR deliverable or an empty requirement set writes nothing.
   private def descriptorResource: Def.Initialize[Task[Seq[File]]] = Def.uncachedTask {
     if SNX.deliverable.value != Deliverable.NIR then Seq.empty
     else
@@ -581,15 +564,15 @@ object SNXPlugin extends AutoPlugin:
         Seq(resource)
   }
 
-  /** Write `content` to `file` only when it differs from the current content, creating parent directories. */
+  // Write `content` to `file` only when it differs from the current content (byte-stability), creating parent
+  // directories.
   private def writeIfChanged(file: File, content: String): Unit =
     val current = if file.isFile then Some(IO.read(file)) else None
     if !current.contains(content) then IO.write(file, content)
 
-  /** Classified publishing for a per-platform NIR library ([[SNXImports.SNX.classified]]): the native content
-    * publishes under the build's OS/arch classifier, the unclassified main coordinate carries a manifest-only
-    * placeholder jar. Disabled by default.
-    */
+  // Classified publishing for a per-platform NIR library (SNX.classified): the native content publishes under the
+  // build's OS/arch classifier, the unclassified main coordinate carries a manifest-only placeholder jar. Disabled by
+  // default.
   private def classifiedPublish: Seq[Setting[?]] = Seq(
     artifacts := {
       val base = artifacts.value
@@ -614,7 +597,7 @@ object SNXPlugin extends AutoPlugin:
   // 1980-01-01T00:00:00Z (the earliest zip timestamp); fixed so the placeholder is byte-identical across rebuilds.
   final private val placeholderEpochMillis: Long = 315532800000L
 
-  /** Write a manifest-only placeholder jar for the unclassified main artefact. */
+  // A manifest-only placeholder jar for the unclassified main artefact (the content publishes under classifiers).
   private def placeholder(out: File, name: String): File =
     val manifest = new Manifest()
     val attributes = manifest.getMainAttributes.nn
@@ -623,11 +606,11 @@ object SNXPlugin extends AutoPlugin:
     IO.jar(Seq.empty[(File, String)], out, manifest, Some(placeholderEpochMillis))
     out
 
-  /** The descriptors carried by the entries of a consumer's classpath, in classpath (dependency) order. */
+  // The descriptors carried by the entries of a consumer's classpath, in classpath (dependency) order.
   private[sbt] def classpathDescriptors(files: Seq[File]): Seq[Descriptor] =
     files.flatMap(file => descriptorText(file).map(Descriptor.parse))
 
-  /** The descriptor text a classpath entry carries at [[Descriptor.resourcePath]] - a directory file or a jar entry. */
+  // The descriptor text a classpath entry carries at Descriptor.resourcePath - a directory file or a jar entry.
   private def descriptorText(file: File): Option[String] =
     if file.isDirectory then
       val resource = new File(file, Descriptor.resourcePath)
@@ -638,7 +621,7 @@ object SNXPlugin extends AutoPlugin:
           Using.resource(archive.getInputStream(entry).nn)(stream => new String(stream.readAllBytes().nn, "UTF-8"))
     else None
 
-  /** Enforce a propagated multithreading requirement: force multithreading on, or fail if the project disabled it. */
+  // Enforce a propagated multithreading requirement: force multithreading on, or fail if the project disabled it.
   private[sbt] def enforceMultithreading(config: NativeConfig, required: Boolean, setting: Option[Boolean]): NativeConfig =
     if !required then config
     else
@@ -647,9 +630,8 @@ object SNXPlugin extends AutoPlugin:
           fail(SNXError.MultithreadingRequired("a native dependency requires multithreading, which this project has disabled"))
         case _ => config.withMultithreading(Some(true))
 
-  /** Build a vendored library for `runtime`: a `Local` origin resolves its directory, a `Git` origin clones at the
-    * pinned ref; the cache keys on the source content.
-    */
+  // Build a vendored library for `runtime`: a Local origin resolves its directory, a Git origin resolves its ref to a
+  // commit and clones it; the cache keys on the source content.
   private def buildVendored(
     library: Vendored,
     linkage: Linkage,
@@ -682,26 +664,25 @@ object SNXPlugin extends AutoPlugin:
           log)
       case Origin.Git(uri, ref) =>
         val clones = new File(staging, "clones")
+        val commit = resolveGitCommit(uri, ref, log)
         cachedBuild(
-          s"git-${Hash.trimHashString(s"$uri@$ref", 8)}",
+          s"git-${Hash.trimHashString(s"$uri@$commit", 8)}",
           library.backend,
           runtime,
           linkage,
           mode,
           clang,
           clangPP,
-          s"git:$uri@$ref",
-          () => fetch(uri, ref, clones),
+          s"git:$uri@$commit",
+          () => fetch(uri, commit, clones, log),
           staging,
           cache,
           converter,
           log
         )
 
-  /** Build `backend` for `runtime`, cached per library: `locate` resolves the source on a miss only, and the key
-    * combines `sourceId`, [[toolchainId]], and `backend.cacheKey`. [[CacheLevelTag.Local]] - a compiled archive is not
-    * portable.
-    */
+  // Build `backend` for `runtime`, cached per library: `locate` resolves the source on a miss only, and the key
+  // combines `sourceId`, toolchainId, and `backend.cacheKey`. CacheLevelTag.Local - a compiled archive is not portable.
   private def cachedBuild(
     name: String,
     backend: Backend,
@@ -721,28 +702,32 @@ object SNXPlugin extends AutoPlugin:
     val key =
       List(BuildInfo.version, runtime.toString, linkage.toString, mode.name, toolchainId(clang, clangPP), sourceId) ++
         backend.cacheKey(runtime)
-    val (archives, includes) = ActionCache.cache[Seq[String], (Seq[String], Seq[String])](
-      key,
-      Digest.zero,
-      Digest.zero,
-      List(CacheLevelTag.Local),
-      cache
-    ) { _ =>
-      val location = locate()
-      IO.delete(sourceStaging)
-      val built = backend.build(BuildContext(location, sourceStaging, runtime, linkage, mode, clang, clangPP, log))
-      requireStaged(built.libraries ++ built.includes, sourceStaging)
-      val outputs =
-        built.libraries.map(file => converter.toVirtualFile(file.toPath.nn)) ++
-          built.includes.map(dir => ActionCache.packageDirectory(converter.toVirtualFile(dir.toPath.nn), converter, outputDir))
-      def relative(files: Seq[File]): Seq[String] = files.map(file => outputDir.relativize(file.toPath).toString)
-      ActionCache.InternalActionResult((relative(built.libraries), relative(built.includes)), outputs)
+    val locks = buildLocks.updateAndGet(current => if current.contains(key) then current else current.updated(key, new Object))
+    val lock = locks(key)
+    val (archives, includes) = lock.synchronized {
+      ActionCache.cache[Seq[String], (Seq[String], Seq[String])](
+        key,
+        Digest.zero,
+        Digest.zero,
+        List(CacheLevelTag.Local),
+        cache
+      ) { _ =>
+        val location = locate()
+        IO.delete(sourceStaging)
+        val built = backend.build(BuildContext(location, sourceStaging, runtime, linkage, mode, clang, clangPP, log))
+        requireStaged(built.libraries ++ built.includes, sourceStaging)
+        val outputs =
+          built.libraries.map(file => converter.toVirtualFile(file.toPath.nn)) ++
+            built.includes.map(dir => ActionCache.packageDirectory(converter.toVirtualFile(dir.toPath.nn), converter, outputDir))
+        def relative(files: Seq[File]): Seq[String] = files.map(file => outputDir.relativize(file.toPath).toString)
+        ActionCache.InternalActionResult((relative(built.libraries), relative(built.includes)), outputs)
+      }
     }
     def absolute(paths: Seq[String]): Seq[File] = paths.map(path => outputDir.resolve(path).nn.toFile.nn)
     Artefacts(absolute(archives), absolute(includes))
   end cachedBuild
 
-  /** Verify every vendored output lies under `staging` so the action cache can capture it; fail clearly otherwise. */
+  // Verify every vendored output lies under `staging` so the action cache can capture it; fail clearly otherwise.
   private[sbt] def requireStaged(outputs: Seq[File], staging: File): Unit =
     val root = staging.toPath.nn.toAbsolutePath.nn.normalize.nn
     outputs.foreach: output =>
@@ -751,41 +736,82 @@ object SNXPlugin extends AutoPlugin:
           SNXError.OutputOutsideStaging(s"snx: vendored output '${output.getAbsolutePath}' lies outside the build staging directory " +
             s"'${staging.getAbsolutePath}'; a backend must write its archives and headers under the BuildContext staging directory"))
 
-  /** Resolve a `Local` vendored directory: relative to the project base if it exists there, else to the build root. */
+  // Resolve a Local vendored directory: relative to the project base if it exists there, else to the build root.
   private def resolveDir(directory: String, projectBase: File, rootBase: File): File =
     val inProject = new File(projectBase, directory)
     if inProject.isDirectory then inProject else new File(rootBase, directory)
 
-  /** Clone `uri` at `ref` into a cached subdirectory of `clones`, reusing an existing clone. */
-  private def fetch(uri: String, ref: String, clones: File): File =
-    val keyed = new java.net.URI(s"$uri#$ref")
+  // Clone `uri` at `commit` into a cached subdirectory of `clones`, reusing an existing clone. Fetches only the pinned
+  // commit (`--depth 1` - the referenced tree, not the whole history), falling back to a full clone and checkout when a
+  // remote rejects fetching a bare commit.
+  private def fetch(uri: String, commit: String, clones: File, log: Logger): File =
+    val keyed = new java.net.URI(s"$uri#$commit")
     val localCopy = Resolvers.uniqueSubdirectoryFor(keyed, clones)
     Resolvers.creates(localCopy) {
-      Resolvers.run("git", "clone", uri, localCopy.getAbsolutePath)
-      Resolvers.run(Some(localCopy), "git", "checkout", "-q", ref)
+      val shallow = scala.util.Try {
+        IO.createDirectory(localCopy)
+        Resolvers.run(Some(localCopy), "git", "init", "-q")
+        Resolvers.run(Some(localCopy), "git", "remote", "add", "origin", uri)
+        Resolvers.run(Some(localCopy), "git", "fetch", "--depth", "1", "origin", commit)
+        Resolvers.run(Some(localCopy), "git", "checkout", "-q", "FETCH_HEAD")
+      }
+      shallow.recover { case scala.util.control.NonFatal(_) =>
+        log.debug(s"snx vendored git: shallow fetch of '$commit' from '$uri' failed; falling back to a full clone")
+        IO.delete(localCopy)
+        Resolvers.run("git", "clone", uri, localCopy.getAbsolutePath)
+        Resolvers.run(Some(localCopy), "git", "checkout", "-q", commit)
+      }.get
     }
 
-  /** A filesystem-safe staging label for a vendored origin. */
+  // Resolve a Git `ref` to the commit it names, so the vendored cache keys on the actual commit rather than a
+  // possibly-moving `ref`: a moved branch or force-moved tag then invalidates the archive, and two hosts resolving the
+  // same ref agree (cross-machine reproducible). A full commit SHA is immutable and used directly (no network). A tag
+  // or branch is resolved via `git ls-remote`; if that fails (offline, or an unreachable remote) the `ref` is used
+  // as-is, so a warm-cache offline build still succeeds.
+  private def resolveGitCommit(uri: String, ref: String, log: Logger): String =
+    if isFullSha(ref) then ref
+    else
+      lsRemote(uri, ref) match
+        case Some(commit) => commit
+        case None         =>
+          log.debug(s"snx vendored git: could not resolve '$ref' at '$uri' to a commit (offline?); keying on the ref")
+          ref
+
+  // Whether `ref` is a full (SHA-1 or SHA-256) commit hash - an immutable identity needing no remote resolution.
+  private[sbt] def isFullSha(ref: String): Boolean =
+    (ref.length == 40 || ref.length == 64) && ref.forall(char => (char >= '0' && char <= '9') || (char >= 'a' && char <= 'f'))
+
+  // The commit a `ref` names on `uri` via `git ls-remote`, preferring an annotated tag's peeled commit (`<ref>^{}`).
+  // None when the command fails or matches nothing (a bare or unknown ref, or an unreachable remote).
+  private def lsRemote(uri: String, ref: String): Option[String] =
+    scala.util
+      .Try(scala.sys.process.Process(Seq("git", "ls-remote", uri, ref)).!!)
+      .toOption
+      .flatMap: output =>
+        val lines = output.linesIterator.map(_.trim.nn).filter(_.nonEmpty).toSeq
+        lines.find(_.endsWith("^{}")).orElse(lines.headOption).flatMap(_.split("\\s").nn.headOption).filter(_.nonEmpty)
+
+  // A filesystem-safe staging label for a vendored origin.
   private def slug(value: String): String = value.replaceAll("[^A-Za-z0-9]+", "-").nn
 
-  /** A toolchain identity for the vendored cache key: the resolved C/C++ compilers actually used - their paths and the C
-    * compiler's `--version`, so an `SNX.clang`/`SNX.clangPP` override or an in-place upgrade invalidates - plus the
-    * `cmake` version. It does NOT capture the CMake backend's ambient build environment (`CC`/`CXX`/`CFLAGS`, the MSVC
-    * target arch), which CMake detects itself; a change there that leaves these unchanged reuses a cached archive.
-    */
+  // A toolchain identity for the vendored cache key: the resolved C/C++ compilers actually used - their paths and the C
+  // compiler's `--version`, so an `SNX.clang`/`SNX.clangPP` override or an in-place upgrade invalidates - the `cmake`
+  // version, and the standard `CFLAGS`/`CXXFLAGS`/`CPPFLAGS` CMake folds into its compile flags. The resolved target
+  // arch is already keyed via the NativeRuntime, and the CMake build pins its compiler (Backend.compilerPin) so ambient
+  // `CC`/`CXX` do not affect it; a non-standard variable a project's own `CMakeLists` reads is not captured.
   private def toolchainId(clang: File, clangPP: File): String =
     def version(tool: String): String =
       scala.util
         .Try(scala.sys.process.Process(Seq(tool, "--version")).!!.linesIterator.find(_.nonEmpty).getOrElse(""))
         .toOption
         .getOrElse("")
-    s"clang=${clang.getAbsolutePath}@${version(clang.getAbsolutePath.nn)};clang++=${clangPP.getAbsolutePath};cmake=${version("cmake")}"
+    val env = Seq("CFLAGS", "CXXFLAGS", "CPPFLAGS").map(name => s"$name=${sys.env.getOrElse(name, "")}").mkString(";")
+    s"clang=${clang.getAbsolutePath}@${version(clang.getAbsolutePath.nn)};clang++=${clangPP.getAbsolutePath};cmake=${version("cmake")};$env"
 
-  /** The toolchain base: the resolved clang/clang++, the discovered compile/link options (host paths cross-stripped),
-    * and the user's include/lib directories.
-    */
+  // The toolchain base: the resolved clang/clang++, the discovered compile/link options (host paths cross-stripped),
+  // and the user's include/lib directories.
   private def discovered(clang: Path, clangPP: Path, includeDirs: Seq[File], libDirs: Seq[File], cross: Boolean): NativeConfig =
-    val compileOptions = crossStrip(Discover.compileOptions(), "-I", cross) ++ includeDirs.map(dir => "-I" + dir.getAbsolutePath)
+    val compileOptions = compileSearchOptions(Discover.compileOptions(), includeDirs, cross)
     val linkingOptions = crossStrip(Discover.linkingOptions(), "-L", cross) ++ libDirs.map(dir => "-L" + dir.getAbsolutePath)
     NativeConfig.empty
       .withClang(clang)
@@ -793,14 +819,25 @@ object SNXPlugin extends AutoPlugin:
       .withCompileOptions(compileOptions)
       .withLinkingOptions(linkingOptions)
 
-  /** Drop options beginning with `prefix` (a host `-I`/`-L` search path) when cross-targeting. */
+  // Order the compile search paths so the project's own headers out-rank ambient system ones. SNX.includeDirs are
+  // emitted as `-I` (searched first); the toolchain-discovered package-manager/LLVM prefixes (/usr/local,
+  // /opt/homebrew, ...) are DEMOTED to `-idirafter` (searched after every `-I` and the standard system dirs) on a host
+  // build, so a vendored library's `-I` - appended later at the rebind - also out-ranks them and its headers are not
+  // shadowed by a same-named system sibling (a Homebrew OpenSSL header shadowing a vendored aws-lc openssl header).
+  // When cross-targeting the host include prefixes do not apply and are dropped entirely (as crossStrip does for `-L`).
+  // Non-`-I` discovered options (`-Qunused-arguments`) are preserved.
+  private[sbt] def compileSearchOptions(discovered: Seq[String], includeDirs: Seq[File], cross: Boolean): Seq[String] =
+    val (includes, residual) = discovered.partition(_.startsWith("-I"))
+    val user = includeDirs.map(dir => "-I" + dir.getAbsolutePath)
+    val demoted = if cross then Seq.empty else includes.flatMap(option => Seq("-idirafter", option.stripPrefix("-I")))
+    user ++ residual ++ demoted
+
+  // Drop options beginning with `prefix` (a host `-I`/`-L` search path) when cross-targeting.
   private[sbt] def crossStrip(options: Seq[String], prefix: String, cross: Boolean): Seq[String] =
     if cross then options.filterNot(_.startsWith(prefix)) else options
 
-  /** The C compiler: the `SNX.clang` override, or the toolchain's discovered `clang`. */
   private def resolveClang(setting: Option[File]): Path = setting.map(_.toPath.nn).getOrElse(Discover.clang())
 
-  /** The C++ compiler: the `SNX.clangPP` override, or the toolchain's discovered `clang++`. */
   private def resolveClangPP(setting: Option[File]): Path = setting.map(_.toPath.nn).getOrElse(Discover.clangpp())
 
 end SNXPlugin

@@ -42,18 +42,19 @@ final class Vendored private[sbt] (
     closure.applyOrElse(runtime, (_: NativeRuntime) => Flags.empty)
 end Vendored
 
-/** Origin factories for [[Vendored]], and the shared content digest used for its cache keys. */
+/** Origin factories for [[Vendored]]. */
 object Vendored:
 
   /** Built from a local `directory`, resolved against the project base directory, then the build root. */
   def local(directory: String): Origin = Origin.Local(directory)
 
-  /** Built from a Git repository `uri` at `ref` (a tag, commit, or branch), pinned and cached; a branch is frozen on
-    * first clone.
+  /** Built from a Git repository `uri` at `ref` (a tag, commit, or branch). The ref is resolved to its current commit
+    * and the build cached on that commit, so moving a branch or force-moving a tag rebuilds; a full commit SHA is used
+    * directly (no network). The clone is shallow - only the referenced tree is fetched, not the whole history.
     */
   def git(uri: String, ref: String): Origin = Origin.Git(uri, ref)
 
-  /** A stable content identity for a source directory: each file's relative path and content hash, sorted. */
+  // A stable content identity for a source directory: each file's relative path and content hash, sorted.
   private[sbt] def contentDigest(directory: File): String =
     val root = directory.toPath.nn
     directory.allPaths
@@ -92,7 +93,6 @@ sealed trait Origin derives CanEqual:
     new Vendored(this, Backend.Command(token, build), PartialFunction.empty)
 end Origin
 
-/** Variants of [[Origin]]. */
 object Origin:
   final private[sbt] case class Local(directory: String) extends Origin
   final private[sbt] case class Git(uri: String, ref: String) extends Origin

@@ -56,6 +56,23 @@ class ConfigSuite extends munit.FunSuite:
     val linking = Seq("-L/usr/local/lib", "-lpthread")
     assertEquals(SNXPlugin.crossStrip(linking, "-L", cross = true), Seq("-lpthread"))
 
+  test("compileSearchOptions puts user -I first and demotes discovered -I to -idirafter on a host build"):
+    val discovered = Seq("-I/opt/homebrew/include", "-I/usr/local/include", "-Qunused-arguments")
+    val user = Seq(new java.io.File("vendor/include"))
+    val userFlag = "-I" + user.head.getAbsolutePath
+    // -I always beats -idirafter, so a user (and, appended later, a vendored) -I out-ranks the discovered
+    // package-manager prefixes; the non-`-I` residual is preserved.
+    assertEquals(
+      SNXPlugin.compileSearchOptions(discovered, user, cross = false),
+      Seq(userFlag, "-Qunused-arguments", "-idirafter", "/opt/homebrew/include", "-idirafter", "/usr/local/include")
+    )
+
+  test("compileSearchOptions drops the discovered host -I entirely when cross-targeting, keeping user -I and residual"):
+    val discovered = Seq("-I/opt/homebrew/include", "-Qunused-arguments")
+    val user = Seq(new java.io.File("vendor/include"))
+    val userFlag = "-I" + user.head.getAbsolutePath
+    assertEquals(SNXPlugin.compileSearchOptions(discovered, user, cross = true), Seq(userFlag, "-Qunused-arguments"))
+
   test("ownRequirements maps native libraries to channels by mode and adds the flags residual"):
     val libraries = Seq(NativeLibrary("a"), NativeLibrary("b").wholeArchive, NativeLibrary.framework("Sec"))
     assertEquals(
@@ -168,4 +185,24 @@ class ConfigSuite extends munit.FunSuite:
     assertEquals(Backend.cmakeBuildType(Mode.releaseFast), "Release")
     assertEquals(Backend.cmakeBuildType(Mode.releaseFull), "Release")
     assertEquals(Backend.cmakeBuildType(Mode.releaseSize), "MinSizeRel")
+
+  test("compilerPin pins the CMake C/C++ compiler on Linux and macOS, and leaves CMake's default detection on Windows"):
+    val clang = new java.io.File("bin/clang")
+    val clangPP = new java.io.File("bin/clang++")
+    val pin = Seq(s"-DCMAKE_C_COMPILER=${clang.getAbsolutePath}", s"-DCMAKE_CXX_COMPILER=${clangPP.getAbsolutePath}")
+    // Linux/macOS: the vendored C is built by the same clang the SN link uses (honouring SNX.clang). Windows: MSVC is
+    // CMake's default and ABI-compatible with the clang-windows-msvc link, so it is left to CMake's own detection.
+    assertEquals(Backend.compilerPin(glibc, clang, clangPP), pin, "Linux pins the resolved clang")
+    assertEquals(Backend.compilerPin(darwin, clang, clangPP), pin, "macOS pins the resolved clang")
+    assertEquals(Backend.compilerPin(msvc, clang, clangPP), Seq.empty[String], "MSVC leaves CMake's default (cl.exe)")
+    assertEquals(Backend.compilerPin(mingw, clang, clangPP), Seq.empty[String], "MinGW (Windows) emits no pin")
+
+  test("isFullSha recognises a full SHA-1/SHA-256 hex commit and rejects a tag, branch, short, uppercase, or non-hex ref"):
+    assert(SNXPlugin.isFullSha("a" * 40), "40-hex is a SHA-1")
+    assert(SNXPlugin.isFullSha("0" * 64), "64-hex is a SHA-256")
+    assert(!SNXPlugin.isFullSha("v1.0.0"), "a tag is not a SHA")
+    assert(!SNXPlugin.isFullSha("main"), "a branch is not a SHA")
+    assert(!SNXPlugin.isFullSha("abc1234"), "a short hash is not a full SHA")
+    assert(!SNXPlugin.isFullSha("A" * 40), "uppercase hex is not accepted - git SHAs are lowercase")
+    assert(!SNXPlugin.isFullSha("g" * 40), "non-hex of length 40 is not a SHA")
 end ConfigSuite

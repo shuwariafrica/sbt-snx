@@ -43,7 +43,10 @@ object Flags:
   /** Raw linker flags. */
   def linkFlags(flag: String*): Flags = empty.copy(linkFlags = flag.toSeq)
 
-  /** System libraries to link (`-l<name>`). */
+  /** System libraries to link as raw `-l<name>` flags - a deliberate escape hatch for a base library never rebound or
+    * provisioned (`m`, `dl`, `pthread`). These bypass the name-keyed rebind and de-duplication of `SNX.libraries`; a
+    * library a consumer might provision or link statically belongs in `SNX.libraries` (a `NativeLibrary`), not here.
+    */
   def libraries(name: String*): Flags = empty.copy(linkFlags = name.map("-l" + _))
 
   /** Requires the consumer to link with multithreading. */

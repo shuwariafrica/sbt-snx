@@ -57,24 +57,20 @@ final case class Artefacts(libraries: Seq[File], includes: Seq[File]) derives Ca
 object Artefacts:
   private[sbt] def empty: Artefacts = Artefacts(Seq.empty, Seq.empty)
 
-/** How a [[Vendored]] library's source is built into [[Artefacts]]. See [[Origin]] for the factory methods that
-  * select a backend.
-  */
+// How a Vendored library's source is built into Artefacts; Origin carries the factory methods that select a backend.
 sealed private[sbt] trait Backend:
 
-  /** Build the source described by `context` and return the archives to link and header directories to expose. */
   def build(context: BuildContext): Artefacts
 
-  /** The backend's contribution to the per-library cache key for `runtime` - its resolved configuration. */
+  // The backend's contribution to the per-library cache key for `runtime` - its resolved configuration, so a config
+  // change invalidates the cached archive.
   def cacheKey(runtime: NativeRuntime): Seq[String]
 
-/** Supported [[Backend]]s. */
 private[sbt] object Backend:
 
-  /** A CMake build of `targets` with per-platform configure `flags`, `BUILD_SHARED_LIBS` set from the requested
-    * [[Linkage]] (a `Static` request forces archives, a `Dynamic` one shared libraries), and an optional
-    * `moduleOverrides` directory prepended to `CMAKE_MODULE_PATH`.
-    */
+  // A CMake build of `targets` with per-platform configure `flags`, `BUILD_SHARED_LIBS` set from the requested Linkage
+  // (Static forces archives, Dynamic shared libraries), and an optional `moduleOverrides` dir prepended to
+  // CMAKE_MODULE_PATH.
   final case class CMake(flags: PartialFunction[NativeRuntime, Seq[String]], targets: Seq[String], moduleOverrides: Option[File])
       extends Backend:
 
@@ -106,12 +102,12 @@ private[sbt] object Backend:
           buildDir.getAbsolutePath,
           s"-DCMAKE_BUILD_TYPE=$buildType",
           s"-DBUILD_SHARED_LIBS=${if shared then "ON" else "OFF"}"
-        ) ++ overrides ++ configureFlags,
+        ) ++ compilerPin(context.runtime, context.clang, context.clangPP) ++ overrides ++ configureFlags,
         "configure",
         context.log
       )
       run(
-        Seq("cmake", "--build", buildDir.getAbsolutePath, "--config", buildType, "--parallel")
+        Seq("cmake", "--build", buildDir.getAbsolutePath, "--config", buildType, "--parallel", buildJobs.toString)
           ++ targets.flatMap(target => Seq("--target", target)),
         "build",
         context.log
@@ -135,33 +131,47 @@ private[sbt] object Backend:
       Seq("cmake", targets.mkString(",")) ++ flags.applyOrElse(runtime, (_: NativeRuntime) => Nil) ++ overridesKey
   end CMake
 
-  /** A user-supplied build: `action` produces the [[Artefacts]]; `token` keys the cache. */
+  // A user-supplied build: `action` produces the Artefacts; `token` keys the cache (the action itself is opaque).
   final case class Command(token: String, action: BuildContext => Artefacts) extends Backend:
     def build(context: BuildContext): Artefacts = action(context)
     def cacheKey(runtime: NativeRuntime): Seq[String] = Seq("command", token)
 
-  /** The CMake `CMAKE_BUILD_TYPE` for a Scala Native build [[Mode]], so a vendored library matches the deliverable's own
-    * optimisation: `debug` (-O0) -> `Debug`, `release-size` -> `MinSizeRel`, the other release modes -> `Release`. The
-    * match is on `Mode.name` because the `Mode` cases are `private[scalanative]` (and strict equality has no `CanEqual`
-    * for `Mode`), so it is coupled to Scala Native's mode-name strings; the value is keyed into the vendored build cache.
-    */
+  // The CMAKE_BUILD_TYPE for a Scala Native build Mode, so a vendored library matches the deliverable's own
+  // optimisation: debug (-O0) -> Debug, release-size -> MinSizeRel, the other release modes -> Release. Matched on
+  // Mode.name because the Mode cases are private[scalanative] (and carry no CanEqual for strict equality), so it is
+  // coupled to Scala Native's mode-name strings; the value is keyed into the vendored build cache.
   private[sbt] def cmakeBuildType(mode: Mode): String = mode.name match
     case "debug"        => "Debug"
     case "release-size" => "MinSizeRel"
     case _              => "Release"
 
-  /** Whether `fileName` is a static archive for `runtime`: `.lib` on MSVC, `.a` elsewhere. Per-runtime so a Unix build
-    * does not accept a stray Windows import `.lib`, and vice versa.
-    */
+  // Whether `fileName` is a static archive for `runtime`: .lib on MSVC, .a elsewhere. Per-runtime so a Unix build does
+  // not accept a stray Windows import .lib, and vice versa.
   private def isArchive(runtime: NativeRuntime)(fileName: String): Boolean = runtime match
     case Windows(_, ABI.Msvc)                            => fileName.endsWith(".lib")
     case Linux(_, _) | Darwin(_) | Windows(_, ABI.MinGw) => fileName.endsWith(".a")
 
-  /** Whether `fileName` is a shared library for `runtime`: `.so` on Linux, `.dylib` on macOS, `.dll` on Windows. */
   private def isShared(runtime: NativeRuntime)(fileName: String): Boolean = runtime match
     case Linux(_, _)   => fileName.endsWith(".so")
     case Darwin(_)     => fileName.endsWith(".dylib")
     case Windows(_, _) => fileName.endsWith(".dll")
+
+  // Pin the compiler the CMake build uses, per platform. On Linux and macOS the vendored C is pinned to the same
+  // clang/clang++ the Scala Native link uses (context.clang/clangPP, so an SNX.clang override reaches it too), so the
+  // archive is built by an ABI-compatible compiler rather than CMake's default (which may be cc/gcc). On Windows the
+  // MSVC toolchain is CMake's default and is ABI-compatible with the clang-windows-msvc link, so it is left to CMake's
+  // own detection - forcing clang there would need a generator/toolset override (MinGW has already failed fast in
+  // build). User `flags` follow the pin, so a project can still override it.
+  private[sbt] def compilerPin(runtime: NativeRuntime, clang: File, clangPP: File): Seq[String] =
+    runtime match
+      case Linux(_, _) | Darwin(_) =>
+        Seq(s"-DCMAKE_C_COMPILER=${clang.getAbsolutePath}", s"-DCMAKE_CXX_COMPILER=${clangPP.getAbsolutePath}")
+      case Windows(_, _) => Seq.empty
+
+  // The job count for `cmake --build --parallel`, bounded to the host's processor count. A bare --parallel defers to
+  // the native tool's default, UNBOUNDED for a Makefiles generator - a fork bomb when several vendored builds run at
+  // once; an explicit count bounds each build.
+  private def buildJobs: Int = math.max(1, Runtime.getRuntime.nn.availableProcessors)
 
   private def fail(error: SNXError): Nothing = throw error // scalafix:ok DisableSyntax.throw
 

@@ -19,17 +19,15 @@ package snx.sbt
 
 import scala.scalanative.build.NativeConfig
 
-/** An additive native configuration - option channels only, no scalars - merged into a [[Native]] by appending its
-  * channels. See [[Contribution$ Contribution]].
-  */
+// An additive native configuration over NativeConfig - option channels only, no scalars - folded into a Native by
+// appending its channels.
 private[sbt] opaque type Contribution = NativeConfig
 
-/** Channels-only fold and builders for [[Contribution]]. */
 private[sbt] object Contribution:
 
   def empty: Contribution = NativeConfig.empty
 
-  /** Append `contribution`'s option channels onto `base`, leaving every scalar untouched. */
+  // Appends only the option channels onto `base`; scalars are left untouched (a Contribution carries none).
   def merge(base: NativeConfig, contribution: Contribution): NativeConfig =
     base
       .withLinkingOptions(base.linkingOptions ++ contribution.linkingOptions)
@@ -44,7 +42,6 @@ private[sbt] object Contribution:
 
     def compileOptions(options: String*): Contribution = self.update(c => c.withCompileOptions(c.compileOptions ++ options))
 
-    /** Add preprocessor definitions (`-D<definition>`) to the compile channel. */
     def define(definitions: String*): Contribution =
       self.update(c => c.withCompileOptions(c.compileOptions ++ definitions.map("-D" + _)))
 
