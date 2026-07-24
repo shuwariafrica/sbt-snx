@@ -214,8 +214,19 @@ build with a clear error rather than producing an unlinkable archive.
 
 For a build CMake does not cover - Make, Autotools, a hand-rolled script - `command(token) { ctx => ... }` is the
 escape hatch: the function builds from `ctx.source` into `ctx.staging` and returns the archives and header directories
-to fold in (an `Artefacts`, whose paths must lie under `ctx.staging` so they are cached); `token` keys the build cache.
-`command` allows use of any toolchain - MinGW included.
+to fold in (an `Artefacts`, whose paths must lie under `ctx.staging` so they are cached). `command` allows use of any
+toolchain - MinGW included.
+
+`token` is the build's cache identity, and keeping it correct is your responsibility. The function is opaque to the
+plugin, so the cache keys on `token` alone - the source content, the toolchain, and the resolved runtime/linkage/mode
+are tracked for you, but a change to the function's own logic is invisible. Change `token` on every change to the build
+- a flag, a target, the recipe - or a warm cache (a persisted CI store, a local rebuild) silently reuses the previous
+archive and a green build links a stale one. Derive it from the build's inputs so editing them updates it:
+
+```scala
+val cflags = Seq("-fms-runtime-lib=static")
+Vendored.local("vendor/mylib").command(s"mylib-${cflags.mkString("_")}") { ctx => /* build using cflags */ }
+```
 
 ### Caching vendored builds in CI
 
@@ -225,7 +236,8 @@ unless you persist the sbt local cache store (the `SBT_LOCAL_CACHE` directory, f
 Doing so turns an expensive source build - an aws-lc or similar - from minutes per matrix cell into seconds, and it is
 safe: the cache key includes the resolved toolchain (the compilers and their versions, `cmake`, and the ambient
 `CFLAGS`/`CXXFLAGS`/`CPPFLAGS`), so a runner-image or compiler change misses and rebuilds rather than reusing a stale
-archive.
+archive. For a `command` build the toolchain is tracked the same way, but the build logic is keyed only by its `token`
+(above) - so a persisted cache is only as correct as your token hygiene.
 
 ## Other link requirements
 

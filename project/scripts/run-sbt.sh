@@ -16,8 +16,13 @@ if [[ -n "${SBT_PROPS:-}" ]]; then
   read -ra extra_args <<< "$SBT_PROPS"
 fi
 
+# The sbt 2.x runner script defaults to the sbtn thin client, which starts a background server that
+# CI's `-Dsbt.server.autostart=false` (SBT_OPTS) then stops from ever listening - the client exits 1
+# on macOS and hangs to the job timeout on Windows. `--server` forces the classic foreground sbt in
+# both branches; sbt's own main drops the flag from its command list, so it is inert wherever a
+# wrapper forwards it into the JVM argv.
 if [[ -z "${DOCKER_IMAGE:-}" ]]; then
-  exec sbt ${extra_args[@]+"${extra_args[@]}"} "$@"
+  exec sbt --server ${extra_args[@]+"${extra_args[@]}"} "$@"
 fi
 
 mkdir -p "$HOME/.cache/coursier" "$HOME/.cache/sbt"
@@ -43,5 +48,5 @@ done
 # getpwuid and falls back to the literal "?"; scripted's publishLocal then writes to ?/.ivy2/local and the
 # sub-build cannot resolve the plugin. Pin user.home to the writable per-UID HOME so both agree.
 exec docker run "${docker_args[@]}" --entrypoint sh "$DOCKER_IMAGE" -c \
-  'mkdir -p "$HOME" && git config --global --add safe.directory "*" && exec sbt -Duser.home="$HOME" "$@"' \
+  'mkdir -p "$HOME" && git config --global --add safe.directory "*" && exec sbt -Duser.home="$HOME" --server "$@"' \
   sh ${extra_args[@]+"${extra_args[@]}"} "$@"

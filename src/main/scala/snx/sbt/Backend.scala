@@ -131,7 +131,8 @@ private[sbt] object Backend:
       Seq("cmake", targets.mkString(",")) ++ flags.applyOrElse(runtime, (_: NativeRuntime) => Nil) ++ overridesKey
   end CMake
 
-  // A user-supplied build: `action` produces the Artefacts; `token` keys the cache (the action itself is opaque).
+  // A user-supplied build: `action` produces the Artefacts; `token` is the cache identity - the action is opaque, so
+  // its logic is not otherwise keyed and the consumer must bump `token` on a build-logic change (see Vendored.command).
   final case class Command(token: String, action: BuildContext => Artefacts) extends Backend:
     def build(context: BuildContext): Artefacts = action(context)
     def cacheKey(runtime: NativeRuntime): Seq[String] = Seq("command", token)

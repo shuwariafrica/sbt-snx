@@ -300,7 +300,7 @@ object SNXPlugin extends AutoPlugin:
     requirements: Usage,
     libraries: Map[String, NativeLibrary],
     runtime: NativeRuntime,
-    build: (Vendored, Linkage) => Artefacts): (NativeConfig, Seq[String]) =
+    build: (Vendored, Linkage) => (Artefacts, Boolean)): (NativeConfig, Seq[String]) =
     val report = Seq.newBuilder[String]
     def realise(config: NativeConfig, name: String, mode: LinkMode): NativeConfig =
       libraries.get(name) match
@@ -309,8 +309,9 @@ object SNXPlugin extends AutoPlugin:
           library.provisioning match
             case Provisioning.Vendored(spec) =>
               if linkage == Linkage.Dynamic then requireDynamicVendorable(runtime, mode, name)
-              val artefacts = build(spec, linkage)
-              report += s"snx library '$name': vendored, linked ${linkageLabel(linkage)} (${artefacts.libraries.size} file(s))"
+              val (artefacts, built) = build(spec, linkage)
+              report +=
+                s"snx library '$name': vendored, ${if built then "built" else "cache hit"}, linked ${linkageLabel(linkage)} (${artefacts.libraries.size} file(s))"
               val withLibraries = config
                 .withLinkingOptions(config.linkingOptions ++ vendoredLink(runtime, mode, linkage, name, artefacts.libraries))
                 .withCompileOptions(config.compileOptions ++ artefacts.includes.map(dir => s"-I${dir.getAbsolutePath}"))
@@ -631,7 +632,8 @@ object SNXPlugin extends AutoPlugin:
         case _ => config.withMultithreading(Some(true))
 
   // Build a vendored library for `runtime`: a Local origin resolves its directory, a Git origin resolves its ref to a
-  // commit and clones it; the cache keys on the source content.
+  // commit and clones it; the cache keys on the source content. Returns the artefacts and whether they were built this
+  // run (else a cache hit).
   private def buildVendored(
     library: Vendored,
     linkage: Linkage,
@@ -644,7 +646,7 @@ object SNXPlugin extends AutoPlugin:
     staging: File,
     cache: BuildWideCacheConfiguration,
     converter: FileConverter,
-    log: Logger): Artefacts =
+    log: Logger): (Artefacts, Boolean) =
     library.origin match
       case Origin.Local(directory) =>
         val location = resolveDir(directory, projectBase, rootBase)
@@ -682,7 +684,8 @@ object SNXPlugin extends AutoPlugin:
         )
 
   // Build `backend` for `runtime`, cached per library: `locate` resolves the source on a miss only, and the key
-  // combines `sourceId`, toolchainId, and `backend.cacheKey`. CacheLevelTag.Local - a compiled archive is not portable.
+  // combines `sourceId`, toolchainId, and `backend.cacheKey`. Returns the artefacts and whether they were built this
+  // run (false = served from the cache). CacheLevelTag.Local - a compiled archive is not portable.
   private def cachedBuild(
     name: String,
     backend: Backend,
@@ -696,7 +699,7 @@ object SNXPlugin extends AutoPlugin:
     staging: File,
     cache: BuildWideCacheConfiguration,
     converter: FileConverter,
-    log: Logger): Artefacts =
+    log: Logger): (Artefacts, Boolean) =
     val sourceStaging = new File(staging, name)
     val outputDir = cache.outputDirectory
     val key =
@@ -704,6 +707,9 @@ object SNXPlugin extends AutoPlugin:
         backend.cacheKey(runtime)
     val locks = buildLocks.updateAndGet(current => if current.contains(key) then current else current.updated(key, new Object))
     val lock = locks(key)
+    // The action-cache block runs only on a miss, so it flips this to record that the archive was built this run
+    // (rather than served from the cache) for the reconciliation report.
+    val built = new java.util.concurrent.atomic.AtomicBoolean(false)
     val (archives, includes) = lock.synchronized {
       ActionCache.cache[Seq[String], (Seq[String], Seq[String])](
         key,
@@ -712,19 +718,20 @@ object SNXPlugin extends AutoPlugin:
         List(CacheLevelTag.Local),
         cache
       ) { _ =>
+        built.set(true)
         val location = locate()
         IO.delete(sourceStaging)
-        val built = backend.build(BuildContext(location, sourceStaging, runtime, linkage, mode, clang, clangPP, log))
-        requireStaged(built.libraries ++ built.includes, sourceStaging)
+        val artefacts = backend.build(BuildContext(location, sourceStaging, runtime, linkage, mode, clang, clangPP, log))
+        requireStaged(artefacts.libraries ++ artefacts.includes, sourceStaging)
         val outputs =
-          built.libraries.map(file => converter.toVirtualFile(file.toPath.nn)) ++
-            built.includes.map(dir => ActionCache.packageDirectory(converter.toVirtualFile(dir.toPath.nn), converter, outputDir))
+          artefacts.libraries.map(file => converter.toVirtualFile(file.toPath.nn)) ++
+            artefacts.includes.map(dir => ActionCache.packageDirectory(converter.toVirtualFile(dir.toPath.nn), converter, outputDir))
         def relative(files: Seq[File]): Seq[String] = files.map(file => outputDir.relativize(file.toPath).toString)
-        ActionCache.InternalActionResult((relative(built.libraries), relative(built.includes)), outputs)
+        ActionCache.InternalActionResult((relative(artefacts.libraries), relative(artefacts.includes)), outputs)
       }
     }
     def absolute(paths: Seq[String]): Seq[File] = paths.map(path => outputDir.resolve(path).nn.toFile.nn)
-    Artefacts(absolute(archives), absolute(includes))
+    (Artefacts(absolute(archives), absolute(includes)), built.get())
   end cachedBuild
 
   // Verify every vendored output lies under `staging` so the action cache can capture it; fail clearly otherwise.
