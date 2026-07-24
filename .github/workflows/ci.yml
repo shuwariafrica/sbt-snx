@@ -105,7 +105,7 @@ jobs:
           "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
       - name: "[${{ matrix.classifier }}${{ matrix.env && format(' ({0})', matrix.env) || '' }}]: Unit tests"
         shell: bash
-        run: ./project/scripts/run-sbt.sh -batch "test"
+        run: ./project/scripts/run-sbt.sh -batch "testOnly *"
       - name: "[${{ matrix.classifier }}${{ matrix.env && format(' ({0})', matrix.env) || '' }}]: Scripted tests"
         shell: bash
         run: ./project/scripts/run-sbt.sh -batch "scripted"
