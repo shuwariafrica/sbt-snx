@@ -1,0 +1,1 @@
+SNX.mode := Mode.releaseFast
