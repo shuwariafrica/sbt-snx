@@ -1,0 +1,8 @@
+# A passing suite records a replay entry keyed on the suite digest. Switching the build mode relinks a
+# different binary while every Scala source is untouched; the binary's digest in the key must invalidate
+# the record, so the suite re-executes and its link-time assertion fails. A stale replay stays green - the
+# defect this fixture exists to catch.
+> test
+$ copy-file changes/release.sbt release.sbt
+> reload
+-> test

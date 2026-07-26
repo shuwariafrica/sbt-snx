@@ -24,10 +24,12 @@ import sbt.Keys.baseDirectory
 import sbt.Keys.compile
 import sbt.Keys.concurrentRestrictions
 import sbt.Keys.crossTarget
+import sbt.Keys.definedTestDigests
 import sbt.Keys.definedTestNames
 import sbt.Keys.definedTests
 import sbt.Keys.envVars
 import sbt.Keys.excludeDependencies
+import sbt.Keys.extraTestDigests
 import sbt.Keys.fileConverter
 import sbt.Keys.fork
 import sbt.Keys.fullClasspath
@@ -54,6 +56,7 @@ import sbt.Keys.testFrameworks
 import sbt.Keys.unmanagedResourceDirectories
 import sbt.Keys.unmanagedSourceDirectories
 import sbt.Keys.version
+import sbt.internal.IncrementalTest
 import sbt.io.Hash
 import sbt.librarymanagement.Configurations.Runtime
 import sbt.librarymanagement.InclExclRule
@@ -501,7 +504,12 @@ object SNXPlugin extends AutoPlugin:
       .map(_.map(_.name).distinct)
       .storeAs(definedTestNames)
       .triggeredBy(loadedTestFrameworks)
-      .value
+      .value,
+    // The suite-replay key hashes only JVM-side inputs, so a relinked binary would replay stale test successes;
+    // keying on the binary's digest corrects that. The `definedTestDigests` rebind drops upstream's
+    // `.triggeredBy(compile)`, which would otherwise force a link on a plain `Test / compile`.
+    definedTestDigests := IncrementalTest.definedTestDigestTask.value,
+    extraTestDigests += Def.uncached(Digest.sha256Hash(SNX.link.value.toPath.nn))
   )
 
   private def fail(error: SNXError): Nothing =
