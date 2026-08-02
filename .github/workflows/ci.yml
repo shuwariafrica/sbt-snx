@@ -1,4 +1,4 @@
-name: build
+name: ci
 
 on:
   workflow_dispatch:
@@ -17,24 +17,42 @@ concurrency:
 
 env:
   SBT_OPTS: "-Xmx7G -Xss4M -XX:ReservedCodeCacheSize=512M -Dsbt.server.autostart=false"
-  JDK_VERSION: "17"
+  JDK_VERSION: "21"
   LLVM_VERSION: "22"
 
 jobs:
   tests:
-    name: "[${{ matrix.os }}-${{ matrix.arch }}${{ matrix.env && format('-{0}', matrix.env) || '' }}] Tests"
+    name: "${{ matrix.triple }} / tests"
     strategy:
       fail-fast: false
       matrix:
+        # ONE ROW PER TARGET TRIPLE sbt-snx supports. The triple is the cell's identity and its job name; every other
+        # field says how that triple is provisioned on a runner, and what the suite should expect to resolve there.
+        #
+        # To support a new triple, add a row. No step below needs editing unless the triple needs a toolchain this
+        # workflow cannot yet install, because the steps branch on `os`/`env`, which are row data.
+        #
+        #   triple      the LLVM short triple `<arch>-<os>-<env>` - the identity, and what the plugin must resolve
+        #   os/arch/env the plugin's own tokens, exported as SNX_EXPECT_* and used to gate steps and fixtures.
+        #               `env` is our ABI token (glibc/musl/msvc/mingw), which is deliberately NOT the triple's LLVM
+        #               environment token (gnu/musl/msvc/gnu) - the two vocabularies differ and both are needed.
+        #   classifier  the published OS/arch classifier the suite asserts
+        #   runner      the GitHub-hosted runner label
+        #   dockerImage set for container cells; absent means the job runs on the host and installs its own JDK/sbt
         include:
-          - { os: linux, env: glibc, arch: x86_64, classifier: linux-x86_64, runner: ubuntu-24.04, dockerImage: "shuwariafrica/el10-jdk:17" }
-          - { os: linux, env: glibc, arch: aarch64, classifier: linux-aarch_64, runner: ubuntu-24.04-arm, dockerImage: "shuwariafrica/el10-jdk:17" }
-          - { os: linux, env: musl, arch: x86_64, classifier: linux-x86_64, runner: ubuntu-24.04, dockerImage: "shuwariafrica/alpine-jdk:17" }
-          - { os: linux, env: musl, arch: aarch64, classifier: linux-aarch_64, runner: ubuntu-24.04-arm, dockerImage: "shuwariafrica/alpine-jdk:17" }
-          - { os: osx, env: "", arch: aarch64, classifier: osx-aarch_64, runner: macos-26 }
-          - { os: windows, env: msvc, arch: x86_64, classifier: windows-x86_64, runner: windows-2025-vs2026 }
-          - { os: windows, env: mingw, arch: x86_64, classifier: windows-x86_64, runner: windows-2025 }
-          - { os: windows, env: msvc, arch: aarch64, classifier: windows-aarch_64, runner: windows-11-arm }
+          - { triple: x86_64-linux-gnu, os: linux, arch: x86_64, env: glibc, classifier: linux-x86_64, runner: ubuntu-24.04, dockerImage: "shuwariafrica/el10-jdk:21" }
+          - { triple: aarch64-linux-gnu, os: linux, arch: aarch64, env: glibc, classifier: linux-aarch_64, runner: ubuntu-24.04-arm, dockerImage: "shuwariafrica/el10-jdk:21" }
+          - { triple: x86_64-linux-musl, os: linux, arch: x86_64, env: musl, classifier: linux-x86_64, runner: ubuntu-24.04, dockerImage: "shuwariafrica/alpine-jdk:21" }
+          - { triple: aarch64-linux-musl, os: linux, arch: aarch64, env: musl, classifier: linux-aarch_64, runner: ubuntu-24.04-arm, dockerImage: "shuwariafrica/alpine-jdk:21" }
+          - { triple: aarch64-apple-darwin, os: osx, arch: aarch64, env: "", classifier: osx-aarch_64, runner: macos-26 }
+          - { triple: x86_64-windows-msvc, os: windows, arch: x86_64, env: msvc, classifier: windows-x86_64, runner: windows-2025-vs2026 }
+          - { triple: aarch64-windows-msvc, os: windows, arch: aarch64, env: msvc, classifier: windows-aarch_64, runner: windows-11-arm }
+          - { triple: x86_64-windows-gnu, os: windows, arch: x86_64, env: mingw, classifier: windows-x86_64, runner: windows-2025 }
+          # openSUSE's clang reports `x86_64-suse-linux`, the only supported toolchain naming no environment
+          # component, so this is the sole cell reaching the compiler-probe fallback and the failure behind it -
+          # every other Linux cell resolves its ABI from the triple alone. `env: glibc` is right: the triple cannot
+          # say so, but the toolchain is glibc and the probe resolves it.
+          - { triple: x86_64-suse-linux, os: linux, arch: x86_64, env: glibc, classifier: linux-x86_64, runner: ubuntu-24.04, dockerImage: "shuwariafrica/opensuse-jdk:21" }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     env:
@@ -103,17 +121,22 @@ jobs:
           C:\msys64\usr\bin\pacman -S --needed --noconfirm mingw-w64-clang-x86_64-toolchain
           "LLVM_BIN=C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-      - name: "[${{ matrix.classifier }}${{ matrix.env && format(' ({0})', matrix.env) || '' }}]: Unit tests"
+      - name: "[${{ matrix.triple }}] Unit tests"
         shell: bash
+        # `testOnly *` rather than `test`: under sbt 2.x `test` resolves through `testQuick`, which skips any suite
+        # holding a success record in the disk action cache that setup-sbt restores between runs. A run whose sources
+        # are unchanged would then execute nothing and still report green. Forcing execution costs build time only -
+        # the restored cache still accelerates compilation. These are the plugin's own JVM suites, so the linked-binary
+        # test digest does not cover them.
         run: ./project/scripts/run-sbt.sh -batch "testOnly *"
-      - name: "[${{ matrix.classifier }}${{ matrix.env && format(' ({0})', matrix.env) || '' }}]: Scripted tests"
+      - name: "[${{ matrix.triple }}] Scripted tests"
         shell: bash
         run: ./project/scripts/run-sbt.sh -batch "scripted"
 
   static-analysis:
-    name: Static analysis
+    name: analyse
     runs-on: ubuntu-24.04
-    container: shuwariafrica/el10-jdk:17
+    container: shuwariafrica/el10-jdk:21
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -125,15 +148,15 @@ jobs:
       - name: Verify Source Formatting
         id: scalafmt
         continue-on-error: true
-        run: sbt -batch scalafmtCheckAll scalafmtSbtCheck
+        run: sbt --server -batch scalafmtCheckAll scalafmtSbtCheck
       - name: Verify Linting Conformity
         id: scalafix
         continue-on-error: true
-        run: sbt -batch "scalafixAll --check"
+        run: sbt --server -batch "scalafixAll --check"
       - name: Verify File Header Conformity
         id: headers
         continue-on-error: true
-        run: sbt -batch headerCheckAll
+        run: sbt --server -batch headerCheckAll
       - name: Check for failures
         if: always()
         env:
@@ -152,11 +175,11 @@ jobs:
           fi
 
   publish:
-    name: Publish
+    name: publish
     needs: [ tests, static-analysis ]
     if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
-    container: shuwariafrica/el10-jdk:17
+    container: shuwariafrica/el10-jdk:21
     timeout-minutes: 30
     permissions:
       contents: read
@@ -172,19 +195,19 @@ jobs:
       - name: Set up Coursier cache
         uses: coursier/cache-action@v8
       - name: ${{ startsWith(github.ref, 'refs/tags/v') && 'Assemble Release' || 'Publish Snapshots' }}
-        run: sbt -batch publishSigned
+        run: sbt --server -batch publishSigned
         env:
           SONATYPE_USERNAME: ${{ secrets.OSS_PUBLISH_USER }}
           SONATYPE_PASSWORD: ${{ secrets.OSS_PUBLISH_USER_PASSPHRASE }}
       - name: Maven Central Release
         if: startsWith(github.ref, 'refs/tags/v')
-        run: sbt -batch sonaUpload sonaRelease
+        run: sbt --server -batch sonaUpload sonaRelease
         env:
           SONATYPE_USERNAME: ${{ secrets.OSS_PUBLISH_USER }}
           SONATYPE_PASSWORD: ${{ secrets.OSS_PUBLISH_USER_PASSPHRASE }}
 
   release:
-    name: GitHub Release
+    name: release
     needs: publish
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04

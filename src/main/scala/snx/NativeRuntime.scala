@@ -42,13 +42,14 @@ object NativeRuntime:
   /** Resolve a [[TargetPlatform]] and a Scala Native target triple into a [[NativeRuntime]], taking the toolchain ABI
     * from the triple's environment component.
     *
-    * @throws SNXError.UnsupportedTarget
-    *   on Linux or Windows when the triple identifies no supported ABI.
+    * Yields `None` where the triple names no environment - `x86_64-suse-linux` gives an architecture, a vendor and an
+    * operating system only - and so identifies neither the C library nor the Windows ABI. macOS has no ABI axis and
+    * always resolves.
     */
-  def parse(target: TargetPlatform, triple: String): NativeRuntime = target.os match
-    case OS.Linux   => Linux(target.arch, resolve(triple, linuxLibc, "Linux C library"))
-    case OS.Darwin  => Darwin(target.arch)
-    case OS.Windows => Windows(target.arch, resolve(triple, windowsABI, "Windows ABI"))
+  def parse(target: TargetPlatform, triple: String): Option[NativeRuntime] = target.os match
+    case OS.Linux   => resolve(triple, linuxLibc).map(Linux(target.arch, _))
+    case OS.Darwin  => Some(Darwin(target.arch))
+    case OS.Windows => resolve(triple, windowsABI).map(Windows(target.arch, _))
 
   /** The native runtimes a [[TargetPlatform]] can resolve to - each supported [[ABI]] for its operating system (both
     * Linux C libraries, both Windows ABIs; macOS has none).
@@ -74,11 +75,8 @@ object NativeRuntime:
     val parts = triple.split("-", 4).nn.toList
     List(parts.lift(3), parts.lift(2)).flatten.map(_.nn).filter(_.nonEmpty)
 
-  private def resolve[A](triple: String, recognise: String => Option[A], component: String): A =
-    environments(triple).flatMap(recognise).headOption.getOrElse(fail(component, triple))
-
-  private def fail(component: String, triple: String): Nothing =
-    throw SNXError.UnsupportedTarget(s"Unable to determine the $component from target triple: '$triple'") // scalafix:ok DisableSyntax.throw
+  private def resolve[A](triple: String, recognise: String => Option[A]): Option[A] =
+    environments(triple).flatMap(recognise).headOption
 
   extension (runtime: NativeRuntime)
     /** Whether the toolchain can link a fully static executable - musl on Linux, MSVC on Windows. */

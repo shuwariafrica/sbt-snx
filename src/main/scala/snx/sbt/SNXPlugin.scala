@@ -72,7 +72,9 @@ import sjsonnew.BasicJsonProtocol.given
 import xsbti.FileConverter
 import xsbti.HashedVirtualFileRef
 
+import java.io.ByteArrayInputStream
 import java.io.File
+import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicReference
 import java.util.jar.Manifest
@@ -86,6 +88,8 @@ import scala.scalanative.build.Logger as NativeLogger
 import scala.scalanative.build.NativeConfig
 import scala.scalanative.testinterface.adapter.TestAdapter
 import scala.scalanative.util.Scope
+import scala.sys.process.Process
+import scala.sys.process.ProcessLogger
 import scala.util.Using
 
 import snx.SNXError
@@ -138,8 +142,8 @@ object SNXPlugin extends AutoPlugin:
     nativeDependencies ++ Seq(
       Keys.platform := nativePlatform,
       SNX.runtime := Def.uncached {
-        val triple = Discover.targetTriple(resolveClang(SNX.clang.value))
-        NativeRuntime.parse(SNX.target.value, triple)
+        val clang = resolveClang(SNX.clang.value)
+        resolveRuntime(SNX.target.value, Discover.targetTriple(clang), clang)
       },
       SNX.clang := None,
       SNX.clangPP := None,
@@ -215,7 +219,7 @@ object SNXPlugin extends AutoPlugin:
       val clangPP = resolveClangPP(SNX.clangPP.value)
       val mode = SNX.mode.value
       val base =
-        discovered(clang, clangPP, SNX.includeDirs.value, SNX.libDirs.value, cross)
+        discovered(clang, clangPP, SNX.includeDirs.value, SNX.libDirs.value, cross, runtime)
           .withMode(mode)
           .withGC(SNX.gc.value)
           .withLTO(SNX.lto.value)
@@ -825,14 +829,32 @@ object SNXPlugin extends AutoPlugin:
 
   // The toolchain base: the resolved clang/clang++, the discovered compile/link options (host paths cross-stripped),
   // and the user's include/lib directories.
-  private def discovered(clang: Path, clangPP: Path, includeDirs: Seq[File], libDirs: Seq[File], cross: Boolean): NativeConfig =
+  private def discovered(
+    clang: Path,
+    clangPP: Path,
+    includeDirs: Seq[File],
+    libDirs: Seq[File],
+    cross: Boolean,
+    runtime: NativeRuntime): NativeConfig =
     val compileOptions = compileSearchOptions(Discover.compileOptions(), includeDirs, cross)
-    val linkingOptions = crossStrip(Discover.linkingOptions(), "-L", cross) ++ libDirs.map(dir => "-L" + dir.getAbsolutePath)
+    val linkingOptions =
+      crossStrip(Discover.linkingOptions(), "-L", cross) ++ libDirs.map(dir => "-L" + dir.getAbsolutePath) ++
+        stackMarking(runtime)
     NativeConfig.empty
       .withClang(clang)
       .withClangPP(clangPP)
       .withCompileOptions(compileOptions)
       .withLinkingOptions(linkingOptions)
+
+  // Scala Native's `SafepointPollTrampoline-{x86_64,aarch64}.S` carry no `.note.GNU-stack`, so GNU ld infers an
+  // executable stack for the entire link: the binaries ship `GNU_STACK RWE`, a hardened loader then refuses the
+  // shared-library deliverable outright, and `ldd` reports "not a dynamic executable" for any of them. Scala Native
+  // needs no executable stack - it says so itself in `delimcc/setjmp.S` - so this supplies the omitted fact rather
+  // than masking the warning, and stays correct once those sections ship. Mach-O and PE have no equivalent marking.
+  private[sbt] def stackMarking(runtime: NativeRuntime): Seq[String] = runtime match
+    case NativeRuntime.Linux(_, _)   => Seq("-Wl,-z,noexecstack")
+    case NativeRuntime.Darwin(_)     => Seq.empty
+    case NativeRuntime.Windows(_, _) => Seq.empty
 
   // Order the compile search paths so the project's own headers out-rank ambient system ones. SNX.includeDirs are
   // emitted as `-I` (searched first); the toolchain-discovered package-manager/LLVM prefixes (/usr/local,
@@ -854,5 +876,45 @@ object SNXPlugin extends AutoPlugin:
   private def resolveClang(setting: Option[File]): Path = setting.map(_.toPath.nn).getOrElse(Discover.clang())
 
   private def resolveClangPP(setting: Option[File]): Path = setting.map(_.toPath.nn).getOrElse(Discover.clangpp())
+
+  // The ABI is never inferred from absence: where neither the triple nor the compiler names one, that is an error
+  // rather than an assumed glibc, since absence cannot distinguish a supported libc from one that is not.
+  private[sbt] def resolveRuntime(target: TargetPlatform, triple: String, clang: Path): NativeRuntime =
+    NativeRuntime
+      .parse(target, triple)
+      .getOrElse:
+        target.os match
+          case OS.Linux =>
+            probeLinuxLibc(clang, triple)
+              .map(NativeRuntime.Linux(target.arch, _))
+              .getOrElse(
+                fail(
+                  SNXError.UnsupportedTarget(
+                    s"Unable to determine the Linux C library for target triple '$triple': it carries no environment " +
+                      s"component, and '$clang' defines no __GLIBC__ when preprocessing <features.h> for that target. Set " +
+                      "SNX.clang to a toolchain whose target triple names its environment, such as 'x86_64-linux-gnu' or " +
+                      "'x86_64-linux-musl'.")))
+          case OS.Windows =>
+            fail(
+              SNXError.UnsupportedTarget(
+                s"Unable to determine the Windows ABI from target triple '$triple': it names neither 'msvc' nor 'gnu'. " +
+                  "Set SNX.clang to a toolchain whose target triple names its environment."))
+          // macOS carries no ABI axis, so `parse` always resolves it and this case cannot be reached.
+          case OS.Darwin =>
+            fail(SNXError.UnsupportedTarget(s"Unable to resolve a macOS native runtime from target triple '$triple'"))
+
+  // Some toolchains report a triple carrying no environment component - openSUSE's clang reports `x86_64-suse-linux`,
+  // and its `-print-effective-triple` agrees - leaving the C library unnameable from the triple alone. Putting the
+  // question to the compiler, for the target it will compile against, honours that target, the sysroot and an
+  // `SNX.clang` override, so the answer is the library the compile will actually see rather than the host's. Only a
+  // positive `__GLIBC__` concludes: musl defines no identifying macro of its own, so absence is not evidence of musl.
+  private[sbt] def probeLinuxLibc(clang: Path, triple: String): Option[ABI[OS.Linux]] =
+    val command = Seq(clang.toString, "-target", triple, "-E", "-dM", "-x", "c", "-")
+    val macros = StringBuilder()
+    def record(line: String): Unit =
+      val _ = macros.append(line).append('\n')
+    val source = ByteArrayInputStream("#include <features.h>\n".getBytes(StandardCharsets.UTF_8))
+    val exit = scala.util.Try(Process(command).#<(source).!(ProcessLogger(record, _ => ()))).getOrElse(1)
+    Option.when(exit == 0 && macros.toString.contains("__GLIBC__"))(ABI.Glibc)
 
 end SNXPlugin

@@ -2,9 +2,9 @@ scalaVersion := "3.8.4"
 name := "sbt-snx"
 organization := "africa.shuwari"
 startYear := Some(2026)
-homepage := Some(url("https://github.com/shuwariafrica/sbt-snx"))
+homepage := Some(uri("https://github.com/shuwariafrica/sbt-snx"))
 scmInfo := ScmInfo(
-  url("https://github.com/shuwariafrica/sbt-snx"),
+  uri("https://github.com/shuwariafrica/sbt-snx"),
   "scm:git:https://github.com/shuwariafrica/sbt-snx.git",
   Some("scm:git:git@github.com:shuwariafrica/sbt-snx.git")
 ).some

@@ -72,4 +72,14 @@ class LinkSuite extends munit.FunSuite:
           val rendered = SNXImports.SNX.staticRuntime(runtime)(Native(NativeConfig.empty)).config
           assert(rendered.linkingOptions.nonEmpty, s"SNX.staticRuntime should render for $runtime")
         else intercept[SNXError.StaticLinkingUnsupported](SNXImports.SNX.staticRuntime(runtime))
+
+  test("stackMarking marks the stack non-executable on GNU ld alone"):
+    TargetPlatform.all
+      .flatMap(NativeRuntime.variants)
+      .foreach: runtime =>
+        val expected = runtime match
+          case NativeRuntime.Linux(_, _)   => Seq("-Wl,-z,noexecstack")
+          case NativeRuntime.Darwin(_)     => Seq.empty
+          case NativeRuntime.Windows(_, _) => Seq.empty
+        assertEquals(SNXPlugin.stackMarking(runtime), expected, runtime.toString)
 end LinkSuite
