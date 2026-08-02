@@ -148,15 +148,15 @@ jobs:
       - name: Verify Source Formatting
         id: scalafmt
         continue-on-error: true
-        run: sbt -batch scalafmtCheckAll scalafmtSbtCheck
+        run: sbt --server -batch scalafmtCheckAll scalafmtSbtCheck
       - name: Verify Linting Conformity
         id: scalafix
         continue-on-error: true
-        run: sbt -batch "scalafixAll --check"
+        run: sbt --server -batch "scalafixAll --check"
       - name: Verify File Header Conformity
         id: headers
         continue-on-error: true
-        run: sbt -batch headerCheckAll
+        run: sbt --server -batch headerCheckAll
       - name: Check for failures
         if: always()
         env:
@@ -195,13 +195,13 @@ jobs:
       - name: Set up Coursier cache
         uses: coursier/cache-action@v8
       - name: ${{ startsWith(github.ref, 'refs/tags/v') && 'Assemble Release' || 'Publish Snapshots' }}
-        run: sbt -batch publishSigned
+        run: sbt --server -batch publishSigned
         env:
           SONATYPE_USERNAME: ${{ secrets.OSS_PUBLISH_USER }}
           SONATYPE_PASSWORD: ${{ secrets.OSS_PUBLISH_USER_PASSPHRASE }}
       - name: Maven Central Release
         if: startsWith(github.ref, 'refs/tags/v')
-        run: sbt -batch sonaUpload sonaRelease
+        run: sbt --server -batch sonaUpload sonaRelease
         env:
           SONATYPE_USERNAME: ${{ secrets.OSS_PUBLISH_USER }}
           SONATYPE_PASSWORD: ${{ secrets.OSS_PUBLISH_USER_PASSPHRASE }}
