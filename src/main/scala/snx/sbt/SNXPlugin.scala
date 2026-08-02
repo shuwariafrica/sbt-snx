@@ -219,7 +219,7 @@ object SNXPlugin extends AutoPlugin:
       val clangPP = resolveClangPP(SNX.clangPP.value)
       val mode = SNX.mode.value
       val base =
-        discovered(clang, clangPP, SNX.includeDirs.value, SNX.libDirs.value, cross)
+        discovered(clang, clangPP, SNX.includeDirs.value, SNX.libDirs.value, cross, runtime)
           .withMode(mode)
           .withGC(SNX.gc.value)
           .withLTO(SNX.lto.value)
@@ -829,14 +829,32 @@ object SNXPlugin extends AutoPlugin:
 
   // The toolchain base: the resolved clang/clang++, the discovered compile/link options (host paths cross-stripped),
   // and the user's include/lib directories.
-  private def discovered(clang: Path, clangPP: Path, includeDirs: Seq[File], libDirs: Seq[File], cross: Boolean): NativeConfig =
+  private def discovered(
+    clang: Path,
+    clangPP: Path,
+    includeDirs: Seq[File],
+    libDirs: Seq[File],
+    cross: Boolean,
+    runtime: NativeRuntime): NativeConfig =
     val compileOptions = compileSearchOptions(Discover.compileOptions(), includeDirs, cross)
-    val linkingOptions = crossStrip(Discover.linkingOptions(), "-L", cross) ++ libDirs.map(dir => "-L" + dir.getAbsolutePath)
+    val linkingOptions =
+      crossStrip(Discover.linkingOptions(), "-L", cross) ++ libDirs.map(dir => "-L" + dir.getAbsolutePath) ++
+        stackMarking(runtime)
     NativeConfig.empty
       .withClang(clang)
       .withClangPP(clangPP)
       .withCompileOptions(compileOptions)
       .withLinkingOptions(linkingOptions)
+
+  // Scala Native's `SafepointPollTrampoline-{x86_64,aarch64}.S` carry no `.note.GNU-stack`, so GNU ld infers an
+  // executable stack for the entire link: the binaries ship `GNU_STACK RWE`, a hardened loader then refuses the
+  // shared-library deliverable outright, and `ldd` reports "not a dynamic executable" for any of them. Scala Native
+  // needs no executable stack - it says so itself in `delimcc/setjmp.S` - so this supplies the omitted fact rather
+  // than masking the warning, and stays correct once those sections ship. Mach-O and PE have no equivalent marking.
+  private[sbt] def stackMarking(runtime: NativeRuntime): Seq[String] = runtime match
+    case NativeRuntime.Linux(_, _)   => Seq("-Wl,-z,noexecstack")
+    case NativeRuntime.Darwin(_)     => Seq.empty
+    case NativeRuntime.Windows(_, _) => Seq.empty
 
   // Order the compile search paths so the project's own headers out-rank ambient system ones. SNX.includeDirs are
   // emitted as `-I` (searched first); the toolchain-discovered package-manager/LLVM prefixes (/usr/local,
