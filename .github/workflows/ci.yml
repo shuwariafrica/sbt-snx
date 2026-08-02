@@ -1,4 +1,4 @@
-name: build
+name: ci
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ env:
 
 jobs:
   tests:
-    name: "[${{ matrix.triple }}] Tests"
+    name: "${{ matrix.triple }} / tests"
     strategy:
       fail-fast: false
       matrix:
@@ -134,7 +134,7 @@ jobs:
         run: ./project/scripts/run-sbt.sh -batch "scripted"
 
   static-analysis:
-    name: Static analysis
+    name: analyse
     runs-on: ubuntu-24.04
     container: shuwariafrica/el10-jdk:21
     timeout-minutes: 20
@@ -175,7 +175,7 @@ jobs:
           fi
 
   publish:
-    name: Publish
+    name: publish
     needs: [ tests, static-analysis ]
     if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
@@ -207,7 +207,7 @@ jobs:
           SONATYPE_PASSWORD: ${{ secrets.OSS_PUBLISH_USER_PASSPHRASE }}
 
   release:
-    name: GitHub Release
+    name: release
     needs: publish
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
