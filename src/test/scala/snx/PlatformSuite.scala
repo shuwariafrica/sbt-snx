@@ -46,27 +46,40 @@ class PlatformSuite extends munit.FunSuite:
   test("NativeRuntime.parse takes the ABI from a four-component triple"):
     assertEquals(
       NativeRuntime.parse(TargetPlatform(OS.Linux, Arch.X86_64), "x86_64-unknown-linux-gnu"),
-      NativeRuntime.Linux(Arch.X86_64, ABI.Glibc))
+      Some(NativeRuntime.Linux(Arch.X86_64, ABI.Glibc)))
     assertEquals(
       NativeRuntime.parse(TargetPlatform(OS.Linux, Arch.X86_64), "x86_64-unknown-linux-musl"),
-      NativeRuntime.Linux(Arch.X86_64, ABI.Musl))
+      Some(NativeRuntime.Linux(Arch.X86_64, ABI.Musl)))
     assertEquals(
       NativeRuntime.parse(TargetPlatform(OS.Windows, Arch.X86_64), "x86_64-pc-windows-msvc"),
-      NativeRuntime.Windows(Arch.X86_64, ABI.Msvc))
+      Some(NativeRuntime.Windows(Arch.X86_64, ABI.Msvc)))
     assertEquals(
       NativeRuntime.parse(TargetPlatform(OS.Windows, Arch.X86_64), "x86_64-w64-windows-gnu"),
-      NativeRuntime.Windows(Arch.X86_64, ABI.MinGw))
+      Some(NativeRuntime.Windows(Arch.X86_64, ABI.MinGw)))
 
   test("NativeRuntime.parse falls back to the third triple component"):
     assertEquals(
       NativeRuntime.parse(TargetPlatform(OS.Linux, Arch.Aarch64), "aarch64-linux-musl"),
-      NativeRuntime.Linux(Arch.Aarch64, ABI.Musl))
+      Some(NativeRuntime.Linux(Arch.Aarch64, ABI.Musl)))
 
   test("NativeRuntime.parse ignores the triple environment on macOS"):
-    assertEquals(NativeRuntime.parse(TargetPlatform(OS.Darwin, Arch.Aarch64), "arm64-apple-darwin"), NativeRuntime.Darwin(Arch.Aarch64))
+    assertEquals(
+      NativeRuntime.parse(TargetPlatform(OS.Darwin, Arch.Aarch64), "arm64-apple-darwin"),
+      Some(NativeRuntime.Darwin(Arch.Aarch64)))
 
-  test("NativeRuntime.parse rejects a triple with no recognised ABI"):
-    intercept[SNXError.UnsupportedTarget](NativeRuntime.parse(TargetPlatform(OS.Linux, Arch.X86_64), "x86_64-unknown-linux-android"))
+  test("NativeRuntime.parse yields no runtime for a triple with no recognised ABI"):
+    assertEquals(NativeRuntime.parse(TargetPlatform(OS.Linux, Arch.X86_64), "x86_64-unknown-linux-android"), None)
+
+  // Real `clang -dumpmachine` output per distribution, openSUSE included - it alone names no environment component.
+  test("NativeRuntime.parse resolves the distribution triples that name an environment, and only those"):
+    val resolved = Map(
+      "x86_64-redhat-linux-gnu" -> Some(NativeRuntime.Linux(Arch.X86_64, ABI.Glibc)), // Fedora, RHEL
+      "x86_64-pc-linux-gnu" -> Some(NativeRuntime.Linux(Arch.X86_64, ABI.Glibc)), // Debian, Ubuntu, Arch, Gentoo
+      "x86_64-alpine-linux-musl" -> Some(NativeRuntime.Linux(Arch.X86_64, ABI.Musl)), // Alpine
+      "x86_64-suse-linux" -> None // openSUSE: no environment
+    )
+    resolved.foreach: (triple, expected) =>
+      assertEquals(NativeRuntime.parse(TargetPlatform(OS.Linux, Arch.X86_64), triple), expected, triple)
 
   test("ABI carries its environment token"):
     assertEquals(ABI.Glibc.token, "gnu")
