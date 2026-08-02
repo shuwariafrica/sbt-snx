@@ -32,14 +32,20 @@ an `SNX` object; the platform types (`TargetPlatform`, `OS`, `Arch`, `NativeRunt
 `TargetPlatform` pairs an `OS` (`Linux`/`Darwin`/`Windows`) with an `Arch` (`X86_64`/`Aarch64`) - the setting-time
 coordinate, defaulting to the build host. `NativeRuntime` is the task-time key matched against: it refines the
 target with the toolchain `ABI` - the C library on Linux (`Glibc`/`Musl`), the runtime ABI on Windows (`Msvc`/`MinGw`) -
-resolved from the native target triple, so each case exposes only the values valid for its operating system:
+so each case exposes only the values valid for its operating system:
 
 - `Linux(arch, abi)`
 - `Darwin(arch)`
 - `Windows(arch, abi)`
 
-Determining the current configured `TargetPlatform` can be achieved in tasks by maching against a `NativeRuntime`. An
-unsupported operating system, architecture, or toolchain ABI fails the build with `SNXError.UnsupportedTarget`.
+Match against a `NativeRuntime` in a task to condition on the configured target.
+
+The ABI comes from the target triple's environment component wherever the toolchain reports one. Not every toolchain
+does - openSUSE's clang reports `x86_64-suse-linux`, naming an architecture, a vendor and an operating system only -
+so where the triple is silent the plugin asks the compiler instead, preprocessing `<features.h>` for the target it
+will compile against. An ABI that neither answers is a build failure (`SNXError.UnsupportedTarget`) rather than a
+guess; point `SNX.clang` at a toolchain whose triple names its environment to resolve it. An unsupported operating
+system or architecture fails the same way.
 
 ## Deliverables, linkage, and the build
 
@@ -65,6 +71,13 @@ A vendored C library must match this CRT choice, or the link mixes runtimes: on 
 CRT by passing `-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>` (with
 `-DCMAKE_POLICY_DEFAULT_CMP0091=NEW`) through the CMake backend's per-platform `flags`; on musl, link it statically (the
 `Vendored` default), since a fully static binary cannot load a shared library.
+
+Linux links are marked non-executable-stack (`-Wl,-z,noexecstack`). Scala Native's safepoint trampolines carry no
+`.note.GNU-stack` section, so GNU ld would otherwise infer an executable stack for the whole link, leaving every
+binary `GNU_STACK RWE`; a hardened loader then refuses a shared-library deliverable outright, and `ldd` reports "not
+a dynamic executable" for any such binary. Scala Native needs no executable stack, so this asserts what its assembly
+omits. Append `-Wl,-z,execstack` through `SNX.modifiers` if you genuinely need one - the last `-z` on the link line
+wins. macOS and Windows carry no equivalent marking and are unaffected.
 
 `SNX.link` links the binary for the enclosing configuration. `run` runs it, forwarding arguments and `run / envVars`;
 `test` runs the project's test frameworks as a native binary (it requires `Test / fork := false`). `run`, `runMain`,
