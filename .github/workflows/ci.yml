@@ -39,6 +39,10 @@ jobs:
         #   classifier  the published OS/arch classifier the suite asserts
         #   runner      the GitHub-hosted runner label
         #   dockerImage set for container cells; absent means the job runs on the host and installs its own JDK/sbt
+        #
+        # Renovate cannot see these image tags: its github-actions manager reads a job's `container:`/`services:`
+        # fields, not matrix data, so the JDK baseline moves here by hand. The `container:` jobs below hold the same
+        # pin and are held still by an organisation rule, so the two must be changed together.
         include:
           - { triple: x86_64-linux-gnu, os: linux, arch: x86_64, env: glibc, classifier: linux-x86_64, runner: ubuntu-24.04, dockerImage: "shuwariafrica/el10-jdk:21" }
           - { triple: aarch64-linux-gnu, os: linux, arch: aarch64, env: glibc, classifier: linux-aarch_64, runner: ubuntu-24.04-arm, dockerImage: "shuwariafrica/el10-jdk:21" }
