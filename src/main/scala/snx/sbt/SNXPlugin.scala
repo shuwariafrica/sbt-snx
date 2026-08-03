@@ -563,19 +563,24 @@ object SNXPlugin extends AutoPlugin:
       (message: String) => log.error(message)
     )
 
-  // As `nativeLogger`, but retaining what the toolchain reports as an error. Scala Native raises a failed link as
+  // As `nativeLogger`, but retaining what the toolchain reports. Scala Native raises a failed link as
   // `BuildException("Failed to link ...")` (`LLVM.scala:165 @ 0.5.12`), which names the output rather than the cause;
-  // the linker's own diagnosis reaches the logger. Retaining it here is what lets a link failure be attributed.
-  private def recordingLogger(log: sbt.util.Logger, diagnostics: scala.collection.mutable.Builder[String, Seq[String]]): NativeLogger =
-    def record(message: String): Unit =
+  // the linker's own diagnosis reaches the logger instead. Retaining it is what lets a link failure be attributed.
+  //
+  // The severity a diagnosis arrives at is NOT a reliable guide, so every level above debug is retained: Scala Native
+  // routes the linker's stdout to info and its stderr to error, and which stream carries a fatal error is the
+  // linker's choice. link.exe writes `LNK1104: cannot open file 'foo.lib'` to STDOUT, so it arrives as info, while
+  // lld-link writes the same condition to stderr. Retaining only the error channel loses the former entirely.
+  private[sbt] def recordingLogger(log: sbt.util.Logger, diagnostics: scala.collection.mutable.Builder[String, Seq[String]]): NativeLogger =
+    def record(emit: String => Unit)(message: String): Unit =
       val _ = diagnostics += message
-      log.error(message)
+      emit(message)
     NativeLogger(
       (throwable: Throwable) => log.trace(throwable),
       (message: String) => log.debug(message),
-      (message: String) => log.info(message),
-      (message: String) => log.warn(message),
-      record
+      record(message => log.info(message)),
+      record(message => log.warn(message)),
+      record(message => log.error(message))
     )
 
   // Library names a linker reported as unresolvable. Every linker words this differently and the text is foreign

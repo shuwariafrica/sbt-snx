@@ -124,6 +124,21 @@ class ConfigSuite extends munit.FunSuite:
     // One failure repeats the same name across several lines; the reader wants it once.
     assertEquals(SNXPlugin.unresolvedLibraries(Seq("cannot find -lfoo", "cannot find -lfoo")), Seq("foo"))
 
+  // Which stream carries a fatal linker error is the linker's choice, and Scala Native routes stdout to info and
+  // stderr to error - so severity cannot be used to decide what is worth retaining. link.exe writes LNK1104 to
+  // stdout, arriving as info; retaining only the error channel lost it entirely and attribution did nothing on that
+  // runner while working on its sibling.
+  test("the recording logger retains every level above debug, so a diagnosis on stdout is not lost"):
+    val diagnostics = Seq.newBuilder[String]
+    val logger = SNXPlugin.recordingLogger(sbt.util.Logger.Null, diagnostics)
+    logger.info("LINK : fatal error LNK1104: cannot open file 'foo.lib'")
+    logger.warn("a warning")
+    logger.error("lld-link: error: could not open 'bar.lib': no such file or directory")
+    logger.debug("noise no diagnosis arrives on")
+    val retained = diagnostics.result()
+    assertEquals(retained.size, 3, clue(retained).toString)
+    assertEquals(SNXPlugin.unresolvedLibraries(retained), Seq("foo", "bar"))
+
   test("unresolvedMessage leads with the descriptor provenance for an inherited name, and gives the remedy either way"):
     val inherited = SNXPlugin.unresolvedMessage(Seq("ssl"), Set("ssl"))
     assert(clue(inherited).contains("required by a resolved dependency's descriptor"))
