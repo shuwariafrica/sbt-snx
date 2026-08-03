@@ -59,18 +59,35 @@ object NativeRuntime:
     case OS.Darwin  => Seq(Darwin(target.arch))
     case OS.Windows => Seq(Windows(target.arch, ABI.Msvc), Windows(target.arch, ABI.MinGw))
 
+  // Recognised from the token rather than by position, for the reason `parse` gives: `x86_64-suse-linux` carries the
+  // operating system third and `aarch64-linux-gnu` second. `mingw32` and `cygwin` name Windows from that slot.
+  private[snx] def os(triple: String): Option[OS] =
+    val parts = triple.split("-", 4).nn.toList
+    List(parts.lift(2), parts.lift(1)).flatten.map(_.nn).flatMap(operatingSystem).headOption
+
+  private def operatingSystem(token: String): Option[OS] =
+    if token.startsWith("linux") then Some(OS.Linux)
+    else if token.startsWith("windows") || token.startsWith("mingw") || token.startsWith("cygwin") then Some(OS.Windows)
+    else if token.startsWith("darwin") || token.startsWith("macos") then Some(OS.Darwin)
+    else None
+
   private def linuxLibc(env: String): Option[ABI[OS.Linux]] =
     if env.startsWith("musl") then Some(ABI.Musl)
     else if env.startsWith("gnu") then Some(ABI.Glibc)
     else None
 
+  // `mingw32`/`mingw64` name the ABI from the OPERATING-SYSTEM slot of the classic `x86_64-w64-mingw32` triple, where
+  // the other forms carry it in the environment slot (`x86_64-w64-windows-gnu`, `aarch64-pc-windows-gnullvm`). Both
+  // reach here because candidates are recognised rather than taken by position, so the token is what decides.
   private def windowsABI(env: String): Option[ABI[OS.Windows]] =
-    if env.startsWith("gnu") then Some(ABI.MinGw)
+    if env.startsWith("gnu") || env.startsWith("mingw") then Some(ABI.MinGw)
     else if env.startsWith("msvc") then Some(ABI.Msvc)
     else None
 
-  // The environment is the fourth component of an `arch-vendor-os-env` triple, or the third of a shorter
-  // `arch-os-env` one; both are offered, most specific first.
+  // Offer the fourth component of an `arch-vendor-os-env` triple and the third of a shorter `arch-os-env` one, most
+  // specific first. Position alone cannot tell those apart from `arch-vendor-os` (`x86_64-suse-linux`), so these are
+  // CANDIDATES: the recognisers above decide, and a component naming an operating system rather than an environment
+  // simply matches nothing and falls through to the caller's next authority.
   private def environments(triple: String): List[String] =
     val parts = triple.split("-", 4).nn.toList
     List(parts.lift(3), parts.lift(2)).flatten.map(_.nn).filter(_.nonEmpty)

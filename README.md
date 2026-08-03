@@ -158,16 +158,29 @@ dependency graph. A consuming application never restates it. (Scala Native alrea
 Publisher and consumer declare a library the same way, and a matching name **rebinds**: a consumer that provisions a
 library the descriptor named - say, vendoring from source a library an upstream linked from the system - declares the
 same `NativeLibrary` name with its own provisioning, and the link realises it from that provisioning instead of the
-default `-l<name>`. When a project provisions libraries locally, the link reports how each requirement resolved -
-rebound to a vendored or unmanaged provisioning, or left to its default `-l<name>` - so a mistyped provisioning is
-visible.
+default `-l<name>`.
+
+The rebind is keyed on the name alone, so say when that is the intent:
+
+```scala
+SNX.libraries += NativeLibrary.inherited("ssl", Vendored.git("https://example.org/ssl.git", "v1.2.3").cmake("ssl"))
+```
+
+`NativeLibrary.inherited` fails at configuration time unless a resolved descriptor requires that name. Declared plainly,
+a mistyped name is indistinguishable from a legitimately different library: the inherited requirement keeps its
+`-l<name>` default, the misnamed library links beside it, and where the system happens to supply the inherited name the
+build succeeds against the wrong library. Use the plain constructor for a library this project needs on its own account,
+and `inherited` for one a dependency asked for. When a project provisions libraries locally, the link also reports how
+each requirement resolved - rebound to a vendored or unmanaged provisioning, or left to its default `-l<name>`.
 
 `.wholeArchive` force-loads every member of a library (for example to keep `__attribute__((constructor))`
 registrations); `NativeLibrary.framework(name)` is a macOS framework, contributing nothing elsewhere. On macOS a
 whole-archive is by archive path (`-force_load`), not by name, so a whole-archive **System** library fails fast there -
 provision it `Vendored` (its built archive is force-loaded by path) or force-load a path with `Modifier.wholeArchive(file)`.
 A library declared `.noSystemDefault` that no provisioning supplies fails the build with a directed message rather than an
-unresolved `-l<name>` at link time.
+unresolved `-l<name>` at link time. Where the linker does fail to resolve a library, the build reports which one, whether
+a resolved dependency's descriptor required it, and the ways to provide it, rather than leaving you to work back from the
+linker's own `cannot find -l<name>`.
 
 `.linkage` sets how a library is linked, per platform - a decision independent of its provisioning. Unset, a library
 follows its provisioning's default (System dynamic, Vendored static); a bare `Static`/`Dynamic` lifts to a constant. A
@@ -192,11 +205,22 @@ A library carries the configurations it applies to in its own definition, like a
 % Test` scopes it to the test link (it folds into the test binary's link and does not export), while a library with no
 configuration applies to every link and exports.
 
-### Source-built C libraries
+## Other link requirements
+
+`SNX.flags` carries the non-library requirements per platform: preprocessor `defines` (`-D`) a consumer's own C must set
+to match a library's headers (a NIR `@define` already propagates on its own), raw `linkFlags`, and a `multithreaded`
+requirement (a force-on, not an option - the consumer's resolved configuration must satisfy it). Like `SNX.libraries`,
+these apply to this project's own link and travel in its published descriptor, so they reach downstream consumers.
+
+```scala
+SNX.flags := { case Windows(_, _) => Flags.defines("WIN32") }
+```
+
+## Building C libraries from source
 
 A `Vendored` provisioning builds a C/C++ library from source and folds it into the link. It is local to the build and
 never published - the built archive folds into a link directly, and a library that ships C publishes that C as source,
-so a vendored provisioning for a NIR library is scoped `% Test`, for the binding tests' own link (below).
+so a vendored provisioning for a NIR library is scoped `% Test`, for the binding tests' own link.
 
 ```scala
 SNX.libraries += NativeLibrary(
@@ -252,17 +276,6 @@ safe: the cache key includes the resolved toolchain (the compilers and their ver
 archive. For a `command` build the toolchain is tracked the same way, but the build logic is keyed only by its `token`
 (above) - so a persisted cache is only as correct as your token hygiene.
 
-## Other link requirements
-
-`SNX.flags` carries the non-library requirements per platform: preprocessor `defines` (`-D`) a consumer's own C must set
-to match a library's headers (a NIR `@define` already propagates on its own), raw `linkFlags`, and a `multithreaded`
-requirement (a force-on, not an option - the consumer's resolved configuration must satisfy it). Like `SNX.libraries`,
-these apply to this project's own link and travel in its published descriptor, so they reach downstream consumers.
-
-```scala
-SNX.flags := { case Windows(_, _) => Flags.defines("WIN32") }
-```
-
 ## Publishing
 
 A plain NIR library publishes a single, platform-independent jar that carries its descriptor. A per-platform NIR
@@ -282,6 +295,7 @@ coordinate. A consumer resolves such a dependency with `% NativeClassifier`. Eit
 | `SNX.clang` `.clangPP` | `Option[File]`                              | discovered `clang` / `clang++`    |
 | `SNX.includeDirs` `.libDirs` | `Seq[File]`                           | empty (host paths cross-stripped) |
 | `SNX.modifiers`      | `Seq[Modifier[Native]]`                       | empty                             |
+| `SNX.staticRuntime`  | `Modifier[Native]` (a value to add)           | not applied                       |
 | `SNX.dependencies`   | `Seq[NativeDependency]`                       | empty                             |
 | `SNX.libraries`      | `PartialFunction[NativeRuntime, Seq[NativeLibrary]]` | empty (named native libraries) |
 | `SNX.flags`          | `PartialFunction[NativeRuntime, Flags]`       | empty (defines/linkFlags/MT)      |
