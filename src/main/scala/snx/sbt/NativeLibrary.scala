@@ -39,7 +39,8 @@ enum Provisioning derives CanEqual:
   case Unmanaged
 
 /** A native library a link requires: its linker `name`, its link [[LinkMode mode]], how the project
-  * [[Provisioning provisions]] it, whether it has a system default, the configurations it applies to, and its
+  * [[Provisioning provisions]] it, whether it has a system default, whether it provisions an inherited requirement,
+  * the configurations it applies to, and its
   * per-platform [[Linkage]] (empty defers to the provisioning default). See [[NativeLibrary$ NativeLibrary]] to
   * construct one.
   */
@@ -48,6 +49,7 @@ final case class NativeLibrary private[sbt] (
   mode: LinkMode,
   provisioning: Provisioning,
   systemDefault: Boolean,
+  inherited: Boolean,
   configurations: Option[String],
   linkage: PartialFunction[NativeRuntime, Linkage]
 ) derives CanEqual:
@@ -79,19 +81,36 @@ object NativeLibrary:
 
   /** A system-provisioned library (`-l<name>`). */
   def apply(name: String): NativeLibrary =
-    NativeLibrary(name, LinkMode.Plain, Provisioning.System, true, None, PartialFunction.empty)
+    NativeLibrary(name, LinkMode.Plain, Provisioning.System, true, false, None, PartialFunction.empty)
 
   /** A library built from source by `vendored`. */
   def apply(name: String, vendored: Vendored): NativeLibrary =
-    NativeLibrary(name, LinkMode.Plain, Provisioning.Vendored(vendored), true, None, PartialFunction.empty)
+    NativeLibrary(name, LinkMode.Plain, Provisioning.Vendored(vendored), true, false, None, PartialFunction.empty)
 
   /** A library under an explicit [[Provisioning]] (for example [[Provisioning.Unmanaged]]). */
   def apply(name: String, provisioning: Provisioning): NativeLibrary =
-    NativeLibrary(name, LinkMode.Plain, provisioning, true, None, PartialFunction.empty)
+    NativeLibrary(name, LinkMode.Plain, provisioning, true, false, None, PartialFunction.empty)
 
   /** A macOS framework (`-framework <name>`), contributing nothing elsewhere. */
   def framework(name: String): NativeLibrary =
-    NativeLibrary(name, LinkMode.Framework, Provisioning.System, true, None, PartialFunction.empty)
+    NativeLibrary(name, LinkMode.Framework, Provisioning.System, true, false, None, PartialFunction.empty)
+
+  /** A library provisioning a requirement inherited from a dependency, built from source by `vendored`.
+    *
+    * The build fails at configuration time unless a resolved descriptor requires `name`. Prefer this over the plain
+    * constructor wherever the intent is to supply a dependency's requirement: the rebind is keyed on the name alone,
+    * so a mistyped one otherwise leaves the inherited requirement on its `-l<name>` default, links the misnamed
+    * library alongside it, and - where the system happens to supply the inherited name - succeeds against the wrong
+    * library.
+    */
+  def inherited(name: String, vendored: Vendored): NativeLibrary =
+    NativeLibrary(name, LinkMode.Plain, Provisioning.Vendored(vendored), true, true, None, PartialFunction.empty)
+
+  /** A library provisioning an inherited requirement under an explicit [[Provisioning]], for example
+    * [[Provisioning.Unmanaged]] where the project compiles the sources in itself.
+    */
+  def inherited(name: String, provisioning: Provisioning): NativeLibrary =
+    NativeLibrary(name, LinkMode.Plain, provisioning, true, true, None, PartialFunction.empty)
 
   // In the companion so the instances are in implicit scope at the `SNX.libraries +=` site; the lift adds an
   // unconditional library to every platform's result.

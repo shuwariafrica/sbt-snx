@@ -76,10 +76,31 @@ class PlatformSuite extends munit.FunSuite:
       "x86_64-redhat-linux-gnu" -> Some(NativeRuntime.Linux(Arch.X86_64, ABI.Glibc)), // Fedora, RHEL
       "x86_64-pc-linux-gnu" -> Some(NativeRuntime.Linux(Arch.X86_64, ABI.Glibc)), // Debian, Ubuntu, Arch, Gentoo
       "x86_64-alpine-linux-musl" -> Some(NativeRuntime.Linux(Arch.X86_64, ABI.Musl)), // Alpine
-      "x86_64-suse-linux" -> None // openSUSE: no environment
+      "arm-unknown-linux-gnueabihf" -> Some(NativeRuntime.Linux(Arch.X86_64, ABI.Glibc)), // hard-float ARM suffix
+      "x86_64-unknown-linux-musleabi" -> Some(NativeRuntime.Linux(Arch.X86_64, ABI.Musl)), // musl with a suffix
+      "x86_64-suse-linux" -> None, // openSUSE: no environment
+      "aarch64-linux-android" -> None // bionic: named, but not a C library we support
     )
     resolved.foreach: (triple, expected) =>
       assertEquals(NativeRuntime.parse(TargetPlatform(OS.Linux, Arch.X86_64), triple), expected, triple)
+
+  // The Windows ABI is named from the environment slot by the modern triples and from the operating-system slot by the
+  // classic MinGW one, so recognition cannot key on position. The MSYS2 clang64 toolchain CI uses reports the modern
+  // form, which is why only the classic form was ever unresolved.
+  test("NativeRuntime.parse resolves the Windows ABI from whichever slot names it"):
+    val resolved = Map(
+      "x86_64-pc-windows-msvc" -> Some(ABI.Msvc),
+      "x86_64-w64-windows-gnu" -> Some(ABI.MinGw), // MSYS2 clang64
+      "aarch64-pc-windows-gnullvm" -> Some(ABI.MinGw), // LLVM-native MinGW
+      "x86_64-w64-mingw32" -> Some(ABI.MinGw), // classic MinGW-w64
+      "i686-w64-mingw32" -> Some(ABI.MinGw), // classic MinGW-w64, 32-bit
+      "x86_64-pc-windows-cygnus" -> None // Cygwin is not a supported ABI
+    )
+    resolved.foreach: (triple, expected) =>
+      assertEquals(
+        NativeRuntime.parse(TargetPlatform(OS.Windows, Arch.X86_64), triple),
+        expected.map(NativeRuntime.Windows(Arch.X86_64, _)),
+        triple)
 
   test("ABI carries its environment token"):
     assertEquals(ABI.Glibc.token, "gnu")

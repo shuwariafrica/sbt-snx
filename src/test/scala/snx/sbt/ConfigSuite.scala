@@ -25,7 +25,9 @@ import scala.scalanative.build.NativeConfig
 import snx.ABI
 import snx.Arch
 import snx.NativeRuntime
+import snx.OS
 import snx.SNXError
+import snx.TargetPlatform
 
 class ConfigSuite extends munit.FunSuite:
 
@@ -83,6 +85,71 @@ class ConfigSuite extends munit.FunSuite:
     val _ = intercept[SNXError.UnprovisionedLibrary](SNXPlugin.requireProvisioned(Seq(NativeLibrary("foo").noSystemDefault)))
     SNXPlugin.requireProvisioned(Seq(NativeLibrary("foo")))
     SNXPlugin.requireProvisioned(Seq(NativeLibrary("foo", Vendored.local("v").cmake("x")).noSystemDefault))
+
+  // The mis-bind this guards is silent: an unmatched name leaves the inherited requirement on its `-l<name>` default
+  // and links the misnamed library beside it, so only the declared intent distinguishes a typo from a new library.
+  test("requireInherited accepts a declaration a dependency requires, in any channel, and rejects one nothing requires"):
+    val vendored = Vendored.local("v").cmake("x")
+    val plain = Usage(Seq("ssl"), Nil, Nil, Nil, Nil, false)
+    SNXPlugin.requireInherited(Seq(NativeLibrary.inherited("ssl", vendored)), plain)
+    SNXPlugin.requireInherited(Seq(NativeLibrary.inherited("Sec", Provisioning.Unmanaged)), Usage(Nil, Seq("Sec"), Nil, Nil, Nil, false))
+    SNXPlugin.requireInherited(Seq(NativeLibrary.inherited("w", vendored)), Usage(Nil, Nil, Seq("w"), Nil, Nil, false))
+    // An undeclared library is unconstrained: a project's own libraries need not answer any inherited requirement.
+    SNXPlugin.requireInherited(Seq(NativeLibrary("sssl", vendored)), plain)
+    val typo = intercept[SNXError.UnmatchedLibrary](SNXPlugin.requireInherited(Seq(NativeLibrary.inherited("sssl", vendored)), plain))
+    assert(clue(typo.toString).contains("sssl"))
+    assert(clue(typo.toString).contains("ssl"))
+    val none = intercept[SNXError.UnmatchedLibrary](SNXPlugin.requireInherited(Seq(NativeLibrary.inherited("ssl", vendored)), Usage.empty))
+    assert(clue(none.toString).contains("no dependency requires a native library"))
+
+  // Real output from each linker the plugin drives. Scala Native reports a failed link as "Failed to link <path>",
+  // naming the output rather than the cause, so these lines are the only place the missing library is named.
+  test("unresolvedLibraries recognises an unresolved library in every linker's wording, and nothing else"):
+    val reported = Seq(
+      "/usr/bin/ld.bfd: cannot find -lfoo: No such file or directory" -> Seq("foo"),
+      "ld.lld: error: unable to find library -lcrypto" -> Seq("crypto"),
+      "ld: library not found for -lssl" -> Seq("ssl"),
+      "ld: library 'z' not found" -> Seq("z"),
+      "LINK : fatal error LNK1181: cannot open input file 'sqlite3.lib'" -> Seq("sqlite3")
+    )
+    reported.foreach: (line, expected) =>
+      assertEquals(SNXPlugin.unresolvedLibraries(Seq(line)), expected, line)
+    // Unrelated diagnostics must stay silent: speaking on a misparse would misdirect the reader.
+    assertEquals(SNXPlugin.unresolvedLibraries(Seq("undefined reference to `foo'", "Failed to link /tmp/out", "")), Nil)
+    // One failure repeats the same name across several lines; the reader wants it once.
+    assertEquals(SNXPlugin.unresolvedLibraries(Seq("cannot find -lfoo", "cannot find -lfoo")), Seq("foo"))
+
+  test("unresolvedMessage leads with the descriptor provenance for an inherited name, and gives the remedy either way"):
+    val inherited = SNXPlugin.unresolvedMessage(Seq("ssl"), Set("ssl"))
+    assert(clue(inherited).contains("required by a resolved dependency's descriptor"))
+    assert(clue(inherited).contains("SNX.libraries"))
+    val own = SNXPlugin.unresolvedMessage(Seq("ssl"), Set.empty)
+    assert(!clue(own).contains("required by a resolved dependency"))
+    assert(clue(own).contains("SNX.libraries"))
+
+  // Resolution takes the operating system from the target and the ABI from the triple, so neither catches the two
+  // disagreeing. `gnu` is legal for Linux AND Windows, so an unchecked contradiction resolved to a plausible wrong
+  // answer - a Linux target reading a MinGW triple yielded glibc - and every platform-keyed decision after it was then
+  // made for the wrong platform.
+  test("requireAgreement rejects a target whose operating system the toolchain's triple contradicts"):
+    val compiler = java.nio.file.Paths.get("/usr/bin/clang").nn
+    val onLinux = TargetPlatform(OS.Linux, Arch.X86_64)
+    val onWindows = TargetPlatform(OS.Windows, Arch.X86_64)
+    val onDarwin = TargetPlatform(OS.Darwin, Arch.Aarch64)
+    // Agreement in every real form, including the classic MinGW triple that names Windows from the OS slot.
+    SNXPlugin.requireAgreement(onLinux, "x86_64-suse-linux", compiler)
+    SNXPlugin.requireAgreement(onLinux, "x86_64-alpine-linux-musl", compiler)
+    SNXPlugin.requireAgreement(onWindows, "x86_64-w64-mingw32", compiler)
+    SNXPlugin.requireAgreement(onWindows, "x86_64-pc-windows-msvc", compiler)
+    SNXPlugin.requireAgreement(onDarwin, "arm64-apple-darwin24", compiler)
+    // A triple naming no operating system we know contradicts nothing, so it stays silent and later steps decide.
+    SNXPlugin.requireAgreement(onLinux, "wasm32-unknown-unknown", compiler)
+    val crossed = intercept[SNXError.TargetMismatch](SNXPlugin.requireAgreement(onLinux, "x86_64-w64-windows-gnu", compiler))
+    assert(clue(crossed.toString).contains("Linux"))
+    assert(clue(crossed.toString).contains("Windows"))
+    assert(clue(crossed.toString).contains("x86_64-w64-windows-gnu"))
+    val _ = intercept[SNXError.TargetMismatch](SNXPlugin.requireAgreement(onWindows, "x86_64-pc-linux-gnu", compiler))
+    intercept[SNXError.TargetMismatch](SNXPlugin.requireAgreement(onDarwin, "x86_64-pc-linux-gnu", compiler))
 
   test("requireLinkageApplicable rejects a resolving linkage on an Unmanaged library, ignoring a non-matching one and other provisionings"):
     val unmanagedStatic = NativeLibrary("x", Provisioning.Unmanaged).linkage { case _ => Linkage.Static }

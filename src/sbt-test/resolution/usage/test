@@ -2,3 +2,5 @@
 > checkDescriptor
 # the consumer resolves the producer and folds that requirement into its link; the unresolvable library fails the link
 -> consumer/Compile/snxLink
+# and the failure is directed - it names the library, attributes it to the dependency, and says how to provide it
+> checkUnresolved

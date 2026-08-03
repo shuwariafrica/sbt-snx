@@ -54,6 +54,15 @@ object SNXError:
   /** A native library declared to have no system default that no provisioning supplies. */
   final case class UnprovisionedLibrary(message: String) extends SNXError(message)
 
+  /** A native library declared as provisioning an inherited requirement that no resolved descriptor names. */
+  final case class UnmatchedLibrary(message: String) extends SNXError(message)
+
+  /** A build target whose operating system contradicts the one the toolchain's target triple names. */
+  final case class TargetMismatch(message: String) extends SNXError(message)
+
+  /** A native library the linker could not resolve at the link. */
+  final case class UnresolvedLibrary(message: String) extends SNXError(message)
+
   /** An `Executable` deliverable with no main class to link. */
   final case class MissingMainClass(message: String) extends SNXError(message)
 

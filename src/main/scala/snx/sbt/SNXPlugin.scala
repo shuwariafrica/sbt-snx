@@ -233,7 +233,9 @@ object SNXPlugin extends AutoPlugin:
       requireLinkageApplicable(libraries, runtime)
       val classpath = if testConfig then fullClasspath.value else (Runtime / fullClasspath).value
       val files = classpath.map(entry => fileConverter.value.toPath(entry.data).toFile.nn)
-      val requirements = (ownRequirements(libraries, flags) ++ Descriptor.fold(classpathDescriptors(files), runtime)).distinct
+      val dependencyRequirements = Descriptor.fold(classpathDescriptors(files), runtime)
+      requireInherited(libraries, dependencyRequirements)
+      val requirements = (ownRequirements(libraries, flags) ++ dependencyRequirements).distinct
       val staging = new File(target.value, s"snx/vendored/${if testConfig then "test" else "main"}")
       val converter = fileConverter.value
       val cache = Def.cacheConfiguration.value
@@ -288,6 +290,23 @@ object SNXPlugin extends AutoPlugin:
         fail(
           SNXError.UnprovisionedLibrary(
             s"native library '${library.name}' has no system default; provision it (Vendored or Unmanaged) in SNX.libraries"))
+
+  // Fail when a library declared `.inherited` names no requirement any resolved descriptor carries. The rebind is
+  // name-keyed, so a mistyped name is otherwise indistinguishable from a legitimately different library: the inherited
+  // requirement keeps its `-l<name>` default, the misnamed library links alongside it, and where the system supplies
+  // the inherited name the link succeeds against the wrong library. Checked against the DEPENDENCY requirements alone
+  // - the project's own libraries also fold into the link, and matching against those would make this vacuous.
+  private[sbt] def requireInherited(libraries: Seq[NativeLibrary], dependencyRequirements: Usage): Unit =
+    val required = (dependencyRequirements.libraries ++ dependencyRequirements.frameworks ++ dependencyRequirements.wholeArchive).toSet
+    libraries
+      .filter(_.inherited)
+      .foreach: library =>
+        if !required.contains(library.name) then
+          val offered = if required.isEmpty then "no dependency requires a native library" else required.toSeq.sorted.mkString(", ")
+          fail(
+            SNXError.UnmatchedLibrary(
+              s"native library '${library.name}' is declared inherited, but no resolved descriptor requires it ($offered); " +
+                "correct the name, or drop `.inherited` if this library is the project's own"))
 
   // Fail when an `Unmanaged` library carries a linkage that resolves for `runtime`: its source is compiled into the
   // binary, so a link linkage is meaningless. A per-platform selector that does not match `runtime` is a no-op.
@@ -458,15 +477,26 @@ object SNXPlugin extends AutoPlugin:
         val entries = if testConfig then fullClasspath.value else (Runtime / fullClasspath).value
         val classpath = entries.map(entry => converter.toPath(entry.data))
         val compilerConfig = SNX.config.value.config.withBuildTarget(buildTarget)
+        val runtime = SNX.runtime.value
+        val diagnostics = Seq.newBuilder[String]
         val config = Config.empty
-          .withLogger(nativeLogger(streams.value.log))
+          .withLogger(recordingLogger(streams.value.log, diagnostics))
           .withClassPath(classpath)
           .withBaseDir(crossTarget.value.toPath.nn)
           .withModuleName(moduleName.value)
           .withMainClass(mainClass)
           .withTestConfig(testConfig)
           .withCompilerConfig(compilerConfig)
-        Scope(implicit scope => Build.buildCachedAwait(config).toFile.nn)
+        val outcome = scala.util.Try(Scope(implicit scope => Build.buildCachedAwait(config).toFile.nn))
+        // Attribution reads the dependency descriptors again, so it runs only once the link has already failed.
+        def attribute(failure: Throwable): File =
+          unresolvedLibraries(diagnostics.result()) match
+            case Nil   => throw failure // scalafix:ok DisableSyntax.throw
+            case names =>
+              val files = entries.map(entry => converter.toPath(entry.data).toFile.nn)
+              val required = Descriptor.fold(classpathDescriptors(files), runtime)
+              fail(SNXError.UnresolvedLibrary(unresolvedMessage(names, (required.libraries ++ required.wholeArchive).toSet)))
+        outcome.fold(attribute, identity)
       }
       .tag(linkTag)
 
@@ -533,10 +563,53 @@ object SNXPlugin extends AutoPlugin:
       (message: String) => log.error(message)
     )
 
-  // Resolve a deliverable and main class into the build target and main class. Fails fast for an unlinked NIR or a
-  // missing Executable main class. The build target follows the deliverable alone - a Library.Static archives, a
-  // Library.Shared links a shared object, an Executable links an application; the static C runtime is a separate opt-in
-  // (SNX.staticRuntime), and the test binary is always an application.
+  // As `nativeLogger`, but retaining what the toolchain reports as an error. Scala Native raises a failed link as
+  // `BuildException("Failed to link ...")` (`LLVM.scala:165 @ 0.5.12`), which names the output rather than the cause;
+  // the linker's own diagnosis reaches the logger. Retaining it here is what lets a link failure be attributed.
+  private def recordingLogger(log: sbt.util.Logger, diagnostics: scala.collection.mutable.Builder[String, Seq[String]]): NativeLogger =
+    def record(message: String): Unit =
+      val _ = diagnostics += message
+      log.error(message)
+    NativeLogger(
+      (throwable: Throwable) => log.trace(throwable),
+      (message: String) => log.debug(message),
+      (message: String) => log.info(message),
+      (message: String) => log.warn(message),
+      record
+    )
+
+  // Library names a linker reported as unresolvable. Every linker words this differently and the text is foreign
+  // input, so the known forms are recognised rather than switched on the platform: GNU ld and gold `cannot find
+  // -lfoo`, lld `unable to find library -lfoo`, ld64 `library not found for -lfoo` and, from Xcode 15, `library 'foo'
+  // not found`, and MSVC link `LNK1181: cannot open input file 'foo.lib'`.
+  private val unresolvedForms = Seq(
+    "cannot find -l([^\\s:,]+)".r,
+    "unable to find library -l([^\\s:,]+)".r,
+    "library not found for -l([^\\s:,]+)".r,
+    "library '([^']+)' not found".r,
+    "cannot open input file '([^']+)\\.lib'".r
+  )
+
+  private[sbt] def unresolvedLibraries(diagnostics: Seq[String]): Seq[String] =
+    diagnostics.flatMap(line => unresolvedForms.flatMap(form => form.findAllMatchIn(line).flatMap(m => Option(m.group(1))))).distinct
+
+  // Turn an unresolved library into a directed failure. A name a dependency's descriptor requires is the confusing
+  // case - the consumer never declared it and the linker names it without saying where it came from - so that
+  // provenance leads. Everything else still gets the remedy, since the surrounding linker output rarely says how a
+  // Scala Native build supplies a C library.
+  private[sbt] def unresolvedMessage(names: Seq[String], required: Set[String]): String =
+    def describe(name: String): String =
+      val origin = if required.contains(name) then ", required by a resolved dependency's descriptor" else ""
+      s"'$name'$origin"
+    val subject = if names.sizeIs == 1 then "native library" else "native libraries"
+    s"the link could not resolve $subject ${names.map(describe).mkString(", ")}. Provide each with " +
+      "SNX.libraries - `NativeLibrary(\"name\")` for a system library, `NativeLibrary(\"name\", Vendored...)` to " +
+      "build it from source, or `NativeLibrary(\"name\", Provisioning.Unmanaged)` to compile your own sources in"
+
+  // The build target follows the deliverable ALONE: a Library.Static archives, a Library.Shared links a shared object,
+  // an Executable links an application. The static C runtime is a separate opt-in (SNX.staticRuntime) rather than a
+  // deliverable kind, and the test binary is always an application, so neither reaches here. NIR is published as a jar
+  // rather than linked, and an Executable cannot be linked without a main class, so both fail fast.
   private[sbt] def resolveTarget(deliverable: Deliverable, main: Option[String]): (BuildTarget, Option[String]) =
     deliverable match
       case Deliverable.NIR =>
@@ -879,7 +952,24 @@ object SNXPlugin extends AutoPlugin:
 
   // The ABI is never inferred from absence: where neither the triple nor the compiler names one, that is an error
   // rather than an assumed glibc, since absence cannot distinguish a supported libc from one that is not.
+  // Fail when the build target's operating system contradicts the one the toolchain targets. Resolution takes the
+  // operating system from `SNX.target` and the ABI from the triple, so a disagreement is caught by neither on its own -
+  // and `gnu` is a valid environment for BOTH Linux (glibc) and Windows (MinGW), so a contradiction resolves to a
+  // plausible wrong answer rather than to nothing: a Linux target reading a MinGW toolchain's triple yields glibc, and
+  // every platform-keyed decision downstream - the descriptor pattern, the per-platform link rendering, static-linking
+  // support, the published classifier - is then made for the wrong platform. Silent on a triple naming no operating
+  // system this project knows, since there is then nothing to contradict.
+  private[sbt] def requireAgreement(target: TargetPlatform, triple: String, clang: Path): Unit =
+    NativeRuntime
+      .os(triple)
+      .filter(_ != target.os)
+      .foreach: named =>
+        fail(
+          SNXError.TargetMismatch(s"SNX.target builds for ${target.os}, but '$clang' targets $named ('$triple'). Set SNX.target to the " +
+            "platform the toolchain builds for, or SNX.clang to a toolchain for the target platform."))
+
   private[sbt] def resolveRuntime(target: TargetPlatform, triple: String, clang: Path): NativeRuntime =
+    requireAgreement(target, triple, clang)
     NativeRuntime
       .parse(target, triple)
       .getOrElse:
@@ -902,6 +992,7 @@ object SNXPlugin extends AutoPlugin:
           // macOS carries no ABI axis, so `parse` always resolves it and this case cannot be reached.
           case OS.Darwin =>
             fail(SNXError.UnsupportedTarget(s"Unable to resolve a macOS native runtime from target triple '$triple'"))
+  end resolveRuntime
 
   // Some toolchains report a triple carrying no environment component - openSUSE's clang reports `x86_64-suse-linux`,
   // and its `-print-effective-triple` agrees - leaving the C library unnameable from the triple alone. Putting the

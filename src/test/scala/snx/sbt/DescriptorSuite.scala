@@ -46,6 +46,23 @@ class DescriptorSuite extends munit.FunSuite:
     val b = Descriptor(module, Map("windows-x86_64-msvc" -> Usage.linkFlags("/X"), "linux" -> Usage.libraries("a")))
     assertEquals(Descriptor.render(a), Descriptor.render(b))
 
+  // The wire is read by whatever plugin version a consumer resolves, which is routinely older than the publisher's.
+  // Every field is read as an optional, so a reader must ignore what it does not know rather than fail the build:
+  // that property is what makes a later additive channel safe to introduce, and it is asserted here so a codec change
+  // cannot quietly remove it.
+  test("parse ignores fields it does not know, at every level of the descriptor"):
+    val known = Descriptor.parse("""{"module":{"organization":"o","name":"n","version":"1"},"usage":{"*":{"libraries":["foo"]}}}""")
+    val unknownInUsage =
+      Descriptor.parse(
+        """{"module":{"organization":"o","name":"n","version":"1"},"usage":{"*":{"libraries":["foo"],"whenAdded":["foo"]}}}""")
+    val unknownInModule =
+      Descriptor.parse("""{"module":{"organization":"o","name":"n","version":"1","extra":true},"usage":{"*":{"libraries":["foo"]}}}""")
+    val unknownAtRoot =
+      Descriptor.parse("""{"module":{"organization":"o","name":"n","version":"1"},"usage":{"*":{"libraries":["foo"]}},"extra":1}""")
+    assertEquals(unknownInUsage, known)
+    assertEquals(unknownInModule, known)
+    assertEquals(unknownAtRoot, known)
+
   test("parse round-trips render, preserving every channel and the requirement"):
     val descriptor = Descriptor(
       module,
