@@ -579,15 +579,19 @@ object SNXPlugin extends AutoPlugin:
     )
 
   // Library names a linker reported as unresolvable. Every linker words this differently and the text is foreign
-  // input, so the known forms are recognised rather than switched on the platform: GNU ld and gold `cannot find
-  // -lfoo`, lld `unable to find library -lfoo`, ld64 `library not found for -lfoo` and, from Xcode 15, `library 'foo'
-  // not found`, and MSVC link `LNK1181: cannot open input file 'foo.lib'`.
+  // input, so the known forms are recognised rather than switched on the platform, and anything unrecognised leaves
+  // the toolchain's own error untouched. Each form below was taken from real output, not from documentation: GNU ld
+  // and gold `cannot find -lfoo`; lld under the GNU driver `unable to find library -lfoo`; ld64 `library not found
+  // for -lfoo` and, from Xcode 15, `library 'foo' not found`. Windows needs one pattern for three spellings of the
+  // same thing, because the linker differs by runner as well as by toolchain: link.exe reports `LNK1104: cannot open
+  // file 'foo.lib'`, lld-link reports `could not open 'foo.lib'`, and LNK1181 reports `cannot open input file
+  // 'foo.lib'` where an input is named on the command line.
   private val unresolvedForms = Seq(
     "cannot find -l([^\\s:,]+)".r,
     "unable to find library -l([^\\s:,]+)".r,
     "library not found for -l([^\\s:,]+)".r,
     "library '([^']+)' not found".r,
-    "cannot open input file '([^']+)\\.lib'".r
+    "(?:cannot open(?: input)? file|could not open) '([^']+)\\.lib'".r
   )
 
   private[sbt] def unresolvedLibraries(diagnostics: Seq[String]): Seq[String] =

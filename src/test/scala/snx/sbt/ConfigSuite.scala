@@ -102,14 +102,19 @@ class ConfigSuite extends munit.FunSuite:
     val none = intercept[SNXError.UnmatchedLibrary](SNXPlugin.requireInherited(Seq(NativeLibrary.inherited("ssl", vendored)), Usage.empty))
     assert(clue(none.toString).contains("no dependency requires a native library"))
 
-  // Real output from each linker the plugin drives. Scala Native reports a failed link as "Failed to link <path>",
-  // naming the output rather than the cause, so these lines are the only place the missing library is named.
+  // Verbatim output from each linker the plugin drives. Scala Native reports a failed link as "Failed to link <path>",
+  // naming the output rather than the cause, so these lines are the only place the missing library is named - which
+  // makes the exact wording load-bearing, and it varies by runner as well as by toolchain. The two Windows/MSVC cells
+  // disagree: x86_64 links through link.exe and aarch64 through lld-link, and an earlier pattern written from recalled
+  // documentation (LNK1181) matched neither, so attribution silently did nothing on both.
   test("unresolvedLibraries recognises an unresolved library in every linker's wording, and nothing else"):
     val reported = Seq(
       "/usr/bin/ld.bfd: cannot find -lfoo: No such file or directory" -> Seq("foo"),
       "ld.lld: error: unable to find library -lcrypto" -> Seq("crypto"),
       "ld: library not found for -lssl" -> Seq("ssl"),
       "ld: library 'z' not found" -> Seq("z"),
+      "LINK : fatal error LNK1104: cannot open file 'snx_modifier_absent.lib'" -> Seq("snx_modifier_absent"),
+      "lld-link: error: could not open 'snx_propagated_absent.lib': no such file or directory" -> Seq("snx_propagated_absent"),
       "LINK : fatal error LNK1181: cannot open input file 'sqlite3.lib'" -> Seq("sqlite3")
     )
     reported.foreach: (line, expected) =>
