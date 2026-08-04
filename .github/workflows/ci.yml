@@ -66,21 +66,21 @@ jobs:
       SNX_EXPECT_ENV: ${{ matrix.env }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
       - name: "[host] Set up Java"
         if: ${{ !matrix.dockerImage }}
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: microsoft
           java-version: ${{ env.JDK_VERSION }}
           check-latest: true
       - name: "[host] Set up sbt"
         if: ${{ !matrix.dockerImage }}
-        uses: sbt/setup-sbt@v1.5.5
+        uses: sbt/setup-sbt@d059c39de700f4cc5cb64f9f56577315e44a984e # v1.5.5
       - name: Set up Coursier cache
-        uses: coursier/cache-action@v8
+        uses: coursier/cache-action@95e5b1029b6b86e7bac033ee44a0697d8a527d2d # v8
       - name: Generate disposable signing key
         if: ${{ matrix.os == 'linux' }}
         shell: bash
@@ -144,11 +144,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
       - name: Set up Coursier cache
-        uses: coursier/cache-action@v8
+        uses: coursier/cache-action@95e5b1029b6b86e7bac033ee44a0697d8a527d2d # v8
       - name: Verify Source Formatting
         id: scalafmt
         continue-on-error: true
@@ -189,15 +189,15 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
       - name: Import signing key
-        uses: crazy-max/ghaction-import-gpg@v7
+        uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7
         with:
           gpg_private_key: ${{ secrets.OSS_PUBLISH_USER_SIGNING_KEY }}
       - name: Set up Coursier cache
-        uses: coursier/cache-action@v8
+        uses: coursier/cache-action@95e5b1029b6b86e7bac033ee44a0697d8a527d2d # v8
       - name: ${{ startsWith(github.ref, 'refs/tags/v') && 'Assemble Release' || 'Publish Snapshots' }}
         run: sbt --server -batch publishSigned
         env:
@@ -221,7 +221,7 @@ jobs:
     steps:
       - name: Mint Release Bot Token
         id: release-bot
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
