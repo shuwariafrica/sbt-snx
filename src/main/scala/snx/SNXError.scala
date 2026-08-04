@@ -42,6 +42,9 @@ object SNXError:
     */
   final case class OutputOutsideStaging(message: String) extends SNXError(message)
 
+  /** A vendored source directory that changed while the build was reading it to compute its cache identity. */
+  final case class SourceChanged(message: String) extends SNXError(message)
+
   /** A static executable requested on a toolchain that cannot link one - musl or MSVC is required. */
   final case class StaticLinkingUnsupported(message: String) extends SNXError(message)
 

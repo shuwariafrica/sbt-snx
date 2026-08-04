@@ -273,6 +273,16 @@ class ConfigSuite extends munit.FunSuite:
     SNXPlugin.requireStaged(Seq(new java.io.File(staging, "prefix/lib/libanswer.a")), staging)
     intercept[SNXError.OutputOutsideStaging](SNXPlugin.requireStaged(Seq(new java.io.File("vendor/answer/include")), staging))
 
+  test("contentDigest hashes an enumerated file set, and fails when a listed file is gone by the time it is read"):
+    val directory = new java.io.File("target/snx-digest-test")
+    val present = new java.io.File(directory, "answer.c")
+    sbt.io.IO.write(present, "int answer(void) { return 42; }")
+    assert(Vendored.contentDigest(directory, Seq(present)).startsWith("answer.c:"))
+    // The enumerate-then-read window: a file the walk listed and the read no longer finds. Skipping it would digest a
+    // file set that never existed on disk, which can collide with one that did and serve a stale cached archive.
+    val vanished = new java.io.File(directory, "removed.c")
+    intercept[SNXError.SourceChanged](Vendored.contentDigest(directory, Seq(present, vanished)))
+
   test("cmakeBuildType maps each Scala Native mode name to its CMake build type - debug and size distinct, releases Release"):
     // Driven by Scala Native's real Mode values: the mapping matches on Mode.name strings, so this pins that coupling -
     // a wrong/renamed name would silently fall through to "Release" (CMake does not error on an unknown build type).

@@ -68,16 +68,15 @@ def scriptedSettings: Seq[Def.Setting[?]] = Seq(
   scripted / excludeFilter := {
     val os = sys.env.get("SNX_EXPECT_OS")
     val env = sys.env.get("SNX_EXPECT_ENV")
-    // detect needs the injected platform ground truth (SNX_EXPECT_OS) the CI matrix sets per cell; static executables
-    // and the static test binary need musl or MSVC (both named `static`); the per-library -Bstatic bracket, the
-    // library C-driver harness, the shell-script clang wrapper, the whole-archive de-duplication link, the
-    // dynamically-linked vendored library in an executable and a NIR test link (`dynamic`, `testdynamic`: macOS
-    // install_name and Windows DLL redistribution are follow-ons), and the zlib-backed integration capstone are
-    // Linux-only (the name-form whole-archive renders nothing on macOS,
-    // per-library System static fails fast there, and the capstone's C + zlib path is Linux). The vendored CMake fixtures are
-    // unsupported on MinGW (MSVC is the supported Windows toolchain), so they are skipped there; `vendored/command`
-    // drives its own build (the Command escape hatch) and runs everywhere. Everything else (including wholearchive) runs
-    // wherever clang is.
+    // `detect` reads the per-cell platform ground truth the CI matrix injects, so it needs SNX_EXPECT_OS set. Both
+    // fixtures named `static` link a static C runtime, which only musl and MSVC support. The Linux-only set covers the
+    // renderings that have no macOS or Windows form or no proven cell: the per-library -Bstatic bracket (`perlib`) and
+    // its de-duplicating whole-archive sibling (`dedup`), the C-driver library harness (`library`), the shell-script
+    // clang wrapper (`clang`), a dynamically-linked vendored library in an executable and in a NIR test link
+    // (`dynamic`, `testdynamic` - macOS install names and Windows DLL redistribution are follow-ons), and the
+    // zlib-backed capstone (`hello`). On MinGW the CMake backend fails fast by design, so its fixtures are skipped
+    // there; the two Command-backed ones drive their own build and run on every toolchain.
+    val commandBacked = Set("command", "worktree")
     new SimpleFileFilter(file =>
       file.getName match {
         case "detect"      => os.isEmpty
@@ -89,7 +88,8 @@ def scriptedSettings: Seq[Def.Setting[?]] = Seq(
         case "clang"       => os.exists(_ != "linux")
         case "dedup"       => os.exists(_ != "linux")
         case "hello"       => os.exists(_ != "linux")
-        case _ => env.contains("mingw") && Option(file.getParentFile).exists(_.getName == "vendored") && file.getName != "command"
+        case name          =>
+          env.contains("mingw") && Option(file.getParentFile).exists(_.getName == "vendored") && !commandBacked(name)
       })
   }
 )

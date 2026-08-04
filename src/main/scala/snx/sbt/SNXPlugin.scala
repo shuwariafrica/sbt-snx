@@ -725,9 +725,10 @@ object SNXPlugin extends AutoPlugin:
           fail(SNXError.MultithreadingRequired("a native dependency requires multithreading, which this project has disabled"))
         case _ => config.withMultithreading(Some(true))
 
-  // Build a vendored library for `runtime`: a Local origin resolves its directory, a Git origin resolves its ref to a
-  // commit and clones it; the cache keys on the source content. Returns the artefacts and whether they were built this
-  // run (else a cache hit).
+  // Build a vendored library for `runtime`, returning its artefacts and whether they were built this run rather than
+  // served from the cache. The origins differ in how the source is identified to that cache: a Local directory is
+  // content-hashed, while a resolved commit is already an immutable identity, so a Git origin keys on it and never
+  // walks the fetched tree.
   private def buildVendored(
     library: Vendored,
     linkage: Linkage,
@@ -842,27 +843,51 @@ object SNXPlugin extends AutoPlugin:
     val inProject = new File(projectBase, directory)
     if inProject.isDirectory then inProject else new File(rootBase, directory)
 
-  // Clone `uri` at `commit` into a cached subdirectory of `clones`, reusing an existing clone. Fetches only the pinned
-  // commit (`--depth 1` - the referenced tree, not the whole history), falling back to a full clone and checkout when a
-  // remote rejects fetching a bare commit.
+  // Stage the worktree of `uri` at `commit` under `clones`, reusing an existing staging. Only the pinned commit is
+  // fetched (`--depth 1` - the referenced tree, not the whole history), falling back to a full clone when a remote
+  // rejects fetching a bare commit. The repository is kept in a sibling directory of the worktree rather than inside
+  // it, so a backend is handed checked-out sources alone: git's automatic maintenance detaches and goes on rewriting
+  // the object store after `git fetch` has returned, and a backend walking a worktree with a repository inside it then
+  // reads files that were enumerated and deleted before it reached them. The window is git's, not any one
+  // filesystem's; a filesystem with slow metadata operations only widens it far enough to hit on every cold build.
   private def fetch(uri: String, commit: String, clones: File, log: Logger): File =
-    val keyed = new java.net.URI(s"$uri#$commit")
-    val localCopy = Resolvers.uniqueSubdirectoryFor(keyed, clones)
-    Resolvers.creates(localCopy) {
+    val staging = new File(clones, Hash.trimHashString(s"$uri@$commit", 8))
+    val repository = new File(staging, "git")
+    val worktree = new File(staging, "source")
+    def checkout(ref: String): Unit =
+      IO.createDirectory(worktree)
+      git(
+        Some(worktree),
+        "--git-dir",
+        repository.getAbsolutePath,
+        "--work-tree",
+        worktree.getAbsolutePath,
+        "checkout",
+        "-q",
+        ref,
+        "--",
+        ".")
+    val _ = Resolvers.creates(staging) {
       val shallow = scala.util.Try {
-        IO.createDirectory(localCopy)
-        Resolvers.run(Some(localCopy), "git", "init", "-q")
-        Resolvers.run(Some(localCopy), "git", "remote", "add", "origin", uri)
-        Resolvers.run(Some(localCopy), "git", "fetch", "--depth", "1", "origin", commit)
-        Resolvers.run(Some(localCopy), "git", "checkout", "-q", "FETCH_HEAD")
+        git(None, "init", "--bare", "-q", repository.getAbsolutePath)
+        git(None, "--git-dir", repository.getAbsolutePath, "remote", "add", "origin", uri)
+        git(None, "--git-dir", repository.getAbsolutePath, "fetch", "--depth", "1", "origin", commit)
+        checkout("FETCH_HEAD")
       }
       shallow.recover { case scala.util.control.NonFatal(_) =>
         log.debug(s"snx vendored git: shallow fetch of '$commit' from '$uri' failed; falling back to a full clone")
-        IO.delete(localCopy)
-        Resolvers.run("git", "clone", uri, localCopy.getAbsolutePath)
-        Resolvers.run(Some(localCopy), "git", "checkout", "-q", commit)
+        IO.delete(Seq(repository, worktree))
+        git(None, "clone", "--bare", "-q", uri, repository.getAbsolutePath)
+        checkout(commit)
       }.get
     }
+    worktree
+  end fetch
+
+  // Run git with automatic maintenance off. A vendored repository is fetched once and read once, so the background
+  // repack `git fetch` would otherwise start serves nothing and outlives the call that triggered it.
+  private def git(cwd: Option[File], arguments: String*): Unit =
+    Resolvers.run(cwd, (Seq("git", "-c", "gc.auto=0", "-c", "maintenance.auto=false") ++ arguments)*)
 
   // Resolve a Git `ref` to the commit it names, so the vendored cache keys on the actual commit rather than a
   // possibly-moving `ref`: a moved branch or force-moved tag then invalidates the archive, and two hosts resolving the
