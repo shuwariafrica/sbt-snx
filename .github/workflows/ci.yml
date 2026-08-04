@@ -78,7 +78,7 @@ jobs:
           check-latest: true
       - name: "[host] Set up sbt"
         if: ${{ !matrix.dockerImage }}
-        uses: sbt/setup-sbt@v1.5.5
+        uses: sbt/setup-sbt@bfea3c5f48abd221b04a6df4798aa5eb8b6a2baf # v1.5.6
       - name: Set up Coursier cache
         uses: coursier/cache-action@v8
       - name: Generate disposable signing key
