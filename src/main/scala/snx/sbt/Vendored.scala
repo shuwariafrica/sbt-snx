@@ -21,8 +21,10 @@ import sbt.io.syntax.*
 import sbt.util.Digest
 
 import java.io.File
+import java.nio.file.NoSuchFileException
 
 import snx.NativeRuntime
+import snx.SNXError
 
 /** A C/C++ library built from source and folded into the link. Declared through the factories on [[Vendored$ Vendored]]:
   * an [[Origin]], a backend, and per-platform [[options]].
@@ -48,21 +50,42 @@ object Vendored:
   /** Built from a local `directory`, resolved against the project base directory, then the build root. */
   def local(directory: String): Origin = Origin.Local(directory)
 
-  /** Built from a Git repository `uri` at `ref` (a tag, commit, or branch). The ref is resolved to its current commit
-    * and the build cached on that commit, so moving a branch or force-moving a tag rebuilds; a full commit SHA is used
-    * directly (no network). The clone is shallow - only the referenced tree is fetched, not the whole history.
+  /** Built from a Git repository `uri` at `ref` - a tag, branch, or commit. The build is cached on the commit the ref
+    * resolves to, so moving a branch or force-moving a tag rebuilds; a full commit SHA resolves without a network
+    * call. Only the referenced tree is fetched, and a backend is handed the checked-out sources alone - the repository
+    * itself is staged outside the directory it receives.
     */
   def git(uri: String, ref: String): Origin = Origin.Git(uri, ref)
 
-  // A stable content identity for a source directory: each file's relative path and content hash, sorted.
+  // A source directory's identity for the build cache. Paths are relative and the entries sorted, so neither the
+  // directory's location nor the order the filesystem enumerates it reaches the key; including the path alongside the
+  // content means a rename invalidates as a content change does.
   private[sbt] def contentDigest(directory: File): String =
+    contentDigest(directory, directory.allPaths.get().filter(_.isFile))
+
+  // The identity of an already-enumerated file set. A listed file that is gone by the time it is read means the
+  // directory changed between the two steps, and that stops the build rather than being skipped: a digest over the
+  // survivors describes a file set that never existed on disk, and it can equal the digest of a state that legitimately
+  // did - serving a cached archive built from different sources, which is the silent staleness the cache exists to
+  // prevent.
+  private[sbt] def contentDigest(directory: File, files: Seq[File]): String =
     val root = directory.toPath.nn
-    directory.allPaths
-      .get()
-      .filter(_.isFile)
-      .map(file => s"${root.relativize(file.toPath)}:${Digest.sha256Hash(file.toPath.nn).hashHexString}")
+    files
+      .map: file =>
+        val content =
+          try Digest.sha256Hash(file.toPath.nn).hashHexString
+          catch
+            case _: NoSuchFileException =>
+              fail(
+                SNXError.SourceChanged(
+                  s"snx: the vendored source directory '${directory.getAbsolutePath}' changed while the build was " +
+                    s"reading it - '${file.getAbsolutePath}' was listed but no longer exists. The vendored build cache " +
+                    "is keyed on this directory's contents, so it must not be modified while a build is running."))
+        s"${root.relativize(file.toPath)}:$content"
       .sorted
       .mkString("\n")
+
+  private def fail(error: SNXError): Nothing = throw error // scalafix:ok DisableSyntax.throw
 end Vendored
 
 /** Where a [[Vendored]] library's source comes from, with the backend methods that build it. See

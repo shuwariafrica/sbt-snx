@@ -251,8 +251,9 @@ build with a clear error rather than producing an unlinkable archive.
 
 For a build CMake does not cover - Make, Autotools, a hand-rolled script - `command(token) { ctx => ... }` is the
 escape hatch: the function builds from `ctx.source` into `ctx.staging` and returns the archives and header directories
-to fold in (an `Artefacts`, whose paths must lie under `ctx.staging` so they are cached). `command` allows use of any
-toolchain - MinGW included.
+to fold in (an `Artefacts`, whose paths must lie under `ctx.staging` so they are cached). A build system that only
+builds in place - a Makefile, most autotools projects - copies `ctx.source` into `ctx.staging` and builds there, so its
+outputs land where the cache can capture them. `command` allows use of any toolchain - MinGW included.
 
 `token` is the build's cache identity, and keeping it correct is your responsibility. The function is opaque to the
 plugin, so the cache keys on `token` alone - the source content, the toolchain, and the resolved runtime/linkage/mode
