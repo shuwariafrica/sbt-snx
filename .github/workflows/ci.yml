@@ -80,7 +80,7 @@ jobs:
         if: ${{ !matrix.dockerImage }}
         uses: sbt/setup-sbt@bfea3c5f48abd221b04a6df4798aa5eb8b6a2baf # v1.5.6
       - name: Set up Coursier cache
-        uses: coursier/cache-action@95e5b1029b6b86e7bac033ee44a0697d8a527d2d # v8
+        uses: coursier/cache-action@95e5b1029b6b86e7bac033ee44a0697d8a527d2d # v8.1.1
       - name: Generate disposable signing key
         if: ${{ matrix.os == 'linux' }}
         shell: bash
@@ -148,7 +148,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Set up Coursier cache
-        uses: coursier/cache-action@95e5b1029b6b86e7bac033ee44a0697d8a527d2d # v8
+        uses: coursier/cache-action@95e5b1029b6b86e7bac033ee44a0697d8a527d2d # v8.1.1
       - name: Verify Source Formatting
         id: scalafmt
         continue-on-error: true
@@ -197,7 +197,7 @@ jobs:
         with:
           gpg_private_key: ${{ secrets.OSS_PUBLISH_USER_SIGNING_KEY }}
       - name: Set up Coursier cache
-        uses: coursier/cache-action@95e5b1029b6b86e7bac033ee44a0697d8a527d2d # v8
+        uses: coursier/cache-action@95e5b1029b6b86e7bac033ee44a0697d8a527d2d # v8.1.1
       - name: ${{ startsWith(github.ref, 'refs/tags/v') && 'Assemble Release' || 'Publish Snapshots' }}
         run: sbt --server -batch publishSigned
         env:
