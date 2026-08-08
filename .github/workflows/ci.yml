@@ -140,7 +140,7 @@ jobs:
   static-analysis:
     name: analyse
     runs-on: ubuntu-24.04
-    container: shuwariafrica/el10-jdk:21
+    container: shuwariafrica/el10-jdk:21@sha256:bfd9eba422c23b9a542958b1163cd6189a1ca83c632e989f8f8722fd8297fbfb
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -183,7 +183,7 @@ jobs:
     needs: [ tests, static-analysis ]
     if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
-    container: shuwariafrica/el10-jdk:21
+    container: shuwariafrica/el10-jdk:21@sha256:bfd9eba422c23b9a542958b1163cd6189a1ca83c632e989f8f8722fd8297fbfb
     timeout-minutes: 30
     permissions:
       contents: read
