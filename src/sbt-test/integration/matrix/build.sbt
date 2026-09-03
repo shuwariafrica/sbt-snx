@@ -3,7 +3,7 @@
 // sbt-snx project does not have - so sbt-snx provides `snxPlatform`, the analogous extension that adds a native row
 // (the standard `VirtualAxis.native` axis) with SNXPlugin enabled. The one matrix expands into a JVM row (`app`) and a
 // native row (`appNative`); each compiles its own platform source directory (`scalajvm` / `scalanative`).
-val scala3 = "3.8.4"
+val scala3 = "3.9.0"
 scalaVersion := scala3
 
 val app = projectMatrix
