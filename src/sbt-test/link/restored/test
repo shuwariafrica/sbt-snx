@@ -1,0 +1,7 @@
+> run one
+# Without the target directory, the next build restores its compile outputs from the cache.
+$ delete target
+> run one
+# An edit then rewrites the restored class's NIR.
+$ copy-file changes/Greeting.scala src/main/scala/Greeting.scala
+> run two

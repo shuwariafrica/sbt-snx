@@ -1,0 +1,13 @@
+# The app's own source wins while it exists, and the Native compiler wrote its generated forms.
+> app/run from-app
+> checkGenerated
+# Deleting it must remove all of its products, so the link takes the library's.
+$ delete app/src/main/scala/shared/Greeting.scala
+> app/run from-lib
+> checkNoAppNir
+# Restoring then deleting it again goes through the action cache's restored outputs as well.
+$ copy-file changes/Greeting.scala app/src/main/scala/shared/Greeting.scala
+> app/run from-app
+$ delete app/src/main/scala/shared/Greeting.scala
+> app/run from-lib
+> checkNoAppNir
