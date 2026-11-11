@@ -1,7 +1,7 @@
 // The consumer (after the build-file swap): resolves both published libraries from the file repo and confirms each
 // descriptor travelled inside the resolved artefact - the classified one through the `% NativeClassifier` derivation,
 // the unclassified one through its plain main jar.
-scalaVersion := "3.8.4"
+scalaVersion := sys.props("scala.version")
 organization := "snx.test"
 version := "0.2.0"
 // The producer published to the build root's `repo` (LocalRootProject / baseDirectory); resolve from the same place.

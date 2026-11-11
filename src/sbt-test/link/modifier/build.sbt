@@ -4,7 +4,7 @@
 // at `+=` and applied to the resolved runtime's link.
 enablePlugins(SNXPlugin)
 
-scalaVersion := "3.8.4"
+scalaVersion := sys.props("scala.version")
 
 SNX.deliverable := Executable
 

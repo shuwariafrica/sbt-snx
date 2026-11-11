@@ -1,6 +1,6 @@
 enablePlugins(SNXPlugin)
 
-scalaVersion := "3.8.4"
+scalaVersion := sys.props("scala.version")
 
 SNX.libraries += NativeLibrary("answer", Vendored.local("vendor/answer").cmake("answer"))
 

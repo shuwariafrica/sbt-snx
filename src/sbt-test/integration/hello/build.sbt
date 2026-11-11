@@ -7,7 +7,7 @@
 // application links and RUNS, printing the zlib version and the vendored answer. Linux-only (the C + zlib path; zlib is
 // present on the el10 and alpine cells). The cross-project rebind - a downstream re-provisioning a transitively-required
 // library - is proven separately in resolution/rebind.
-scalaVersion := "3.8.4"
+scalaVersion := sys.props("scala.version")
 organization := "snx.test"
 version := "0.1.0"
 

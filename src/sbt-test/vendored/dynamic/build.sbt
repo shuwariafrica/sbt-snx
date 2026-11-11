@@ -1,6 +1,6 @@
 enablePlugins(SNXPlugin)
 
-scalaVersion := "3.8.4"
+scalaVersion := sys.props("scala.version")
 
 libraryDependencies += "org.scalameta" %% "munit" % sys.props("munit.version") % Test
 testFrameworks += new TestFramework("munit.Framework")

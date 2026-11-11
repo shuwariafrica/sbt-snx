@@ -3,7 +3,7 @@
 // Conversion are therefore proven, not asserted. Each form below is a distinct inference path: the bare `+=`, a `+=`
 // of a builder result, a framework constructor, a `++=` of a Seq, the `:= { case ... }` partial function, and the
 // `:= Seq(...)` lifting Conversion.
-scalaVersion := "3.8.4"
+scalaVersion := sys.props("scala.version")
 
 enablePlugins(SNXPlugin)
 

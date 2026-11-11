@@ -2,7 +2,7 @@
 // definition, mirroring a managed dependency's `% Test` - does NOT export into the published descriptor, while a
 // library with no configuration applies to every link and exports. (That a `% Test` library still folds into the test
 // link is proven by vendored/test, whose binding tests link a `% Test` vendored library.)
-scalaVersion := "3.8.4"
+scalaVersion := sys.props("scala.version")
 organization := "snx.test"
 version := "0.1.0"
 

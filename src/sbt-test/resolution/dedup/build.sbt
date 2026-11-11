@@ -7,7 +7,7 @@ import scala.sys.process.Process
 // and the link would fail with a duplicate-symbol error, so a successful link is the proof. libdup.a carries a
 // non-static global (snx_dup), the symbol that collides on a double load. The name-form whole-archive exists only on
 // GNU ld and MSVC (macOS has none), so the fixture is Linux-gated by the build's scripted/excludeFilter.
-scalaVersion := "3.8.4"
+scalaVersion := sys.props("scala.version")
 
 val archive = settingKey[File]("the static archive both libraries' descriptors force-load")
 val buildDupArchive = taskKey[Unit]("compile dup.c into libdup.a, exporting a non-static global, for the resolved platform")

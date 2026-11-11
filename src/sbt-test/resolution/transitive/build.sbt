@@ -2,7 +2,7 @@
 // dependency's), and a downstream link aggregates the whole transitive graph by scanning the classpath. base declares
 // a requirement; middle (depending on base) declares its own and must NOT carry base's; app (depending on middle)
 // links, folding base's requirement transitively through the classpath - the unresolvable library fails the link.
-scalaVersion := "3.8.4"
+scalaVersion := sys.props("scala.version")
 
 val base = project
   .enablePlugins(SNXPlugin)

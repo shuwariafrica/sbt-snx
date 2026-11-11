@@ -2,7 +2,7 @@ import scala.scalanative.build.Discover
 
 enablePlugins(SNXPlugin)
 
-scalaVersion := "3.8.4"
+scalaVersion := sys.props("scala.version")
 
 SNX.deliverable := Executable
 
