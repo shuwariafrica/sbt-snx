@@ -20,6 +20,7 @@ package snx.sbt
 import sbt.*
 import sbt.Keys.artifact
 import sbt.Keys.artifacts
+import sbt.Keys.auxiliaryClassFiles
 import sbt.Keys.baseDirectory
 import sbt.Keys.compile
 import sbt.Keys.concurrentRestrictions
@@ -163,8 +164,9 @@ object SNXPlugin extends AutoPlugin:
       SNX.classified := false,
       libraryDependencies ++= SNX.dependencies.value.map(dependency => derive(SNX.target.value, dependency)),
       Compile / resourceGenerators += descriptorResource.taskValue
-    ) ++ classifiedPublish ++ inConfig(Compile)(relativization ++ pathSettings ++ nativeSettings(testConfig = false)) ++
-      inConfig(Test)(relativization ++ pathSettings ++ nativeSettings(testConfig = true) ++ testSettings)
+    ) ++ classifiedPublish ++
+      inConfig(Compile)(relativization ++ nirProducts ++ pathSettings ++ nativeSettings(testConfig = false)) ++
+      inConfig(Test)(relativization ++ nirProducts ++ pathSettings ++ nativeSettings(testConfig = true) ++ testSettings)
 
   // Add the Scala Native compiler plugin (JVM-pinned: it is a JVM plugin, not a native artefact) and the runtime
   // libraries, excluding the `_2.13`-cross standard libraries.
@@ -190,6 +192,11 @@ object SNXPlugin extends AutoPlugin:
       val paths = sourceDirectories.value.map(_.getAbsolutePath.nn).mkString(";")
       s"-P:scalanative:positionRelativizationPaths:$paths"
     }
+  )
+
+  // NIR follows its JVM class through Zinc's incremental deletion and rollback, per configuration.
+  private def nirProducts: Seq[Setting[?]] = Seq(
+    auxiliaryClassFiles := Def.uncached(auxiliaryClassFiles.value :+ NirProducts)
   )
 
   // Inject the per-platform source and resource directories (`scalanative-<os>`/`-<os>-<arch>`,
