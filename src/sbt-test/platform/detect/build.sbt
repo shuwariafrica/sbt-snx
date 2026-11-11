@@ -1,6 +1,6 @@
 enablePlugins(SNXPlugin)
 
-scalaVersion := "3.8.4"
+scalaVersion := sys.props("scala.version")
 
 // The check asserts host OS/arch detection and toolchain ABI resolution against the ground truth
 // (snx.expect.{classifier,env}) the build forwards from the CI matrix.

@@ -1,4 +1,3 @@
-scalaVersion := "3.8.4"
 name := "sbt-snx"
 organization := "africa.shuwari"
 startYear := Some(2026)
@@ -62,6 +61,7 @@ def scriptedSettings: Seq[Def.Setting[?]] = Seq(
     "-Dsbt.server.autostart=false",
     s"-Dplugin.version=${version.value}",
     s"-Dmunit.version=${Dependencies.munit.revision}",
+    s"-Dscala.version=${Dependencies.`scala3-library`.revision}",
     s"-Duser.home=${sys.props.getOrElse("user.home", "")}"
   ),
   scriptedBufferLog := false,

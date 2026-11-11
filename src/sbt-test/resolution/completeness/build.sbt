@@ -3,7 +3,7 @@
 // resolves the project (and transitively the dependency) gets the requirement; and (b) folds into the project's OWN
 // link. `vendor` is the under-declaring NIR dependency: it declares no native library, so it ships no descriptor and
 // nothing else carries its requirement.
-scalaVersion := "3.8.4"
+scalaVersion := sys.props("scala.version")
 organization := "snx.test"
 version := "0.1.0"
 

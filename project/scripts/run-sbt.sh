@@ -2,7 +2,7 @@
 # Run sbt on the host, or inside a Docker dev image when DOCKER_IMAGE is set, so the per-OS CI matrix
 # (glibc/musl Linux containers; host macOS/Windows) is one reproducible command for CI and local use:
 #
-#   DOCKER_IMAGE=shuwariafrica/alpine-jdk:17 \
+#   DOCKER_IMAGE=shuwariafrica/alpine-jdk:21 \
 #     SNX_EXPECT_CLASSIFIER=linux-x86_64 SNX_EXPECT_OS=linux SNX_EXPECT_ENV=musl \
 #     ./project/scripts/run-sbt.sh -batch "scripted platform/detect"
 #
@@ -44,9 +44,9 @@ for env_var in TERM CI SBT_OPTS SNX_EXPECT_CLASSIFIER SNX_EXPECT_OS SNX_EXPECT_E
   fi
 done
 
-# `--user UID:GID` has no /etc/passwd entry inside the image, so the JVM cannot resolve user.home from
-# getpwuid and falls back to the literal "?"; scripted's publishLocal then writes to ?/.ivy2/local and the
-# sub-build cannot resolve the plugin. Pin user.home to the writable per-UID HOME so both agree.
+# `--user UID:GID` has no /etc/passwd entry inside the image, so the JVM reports user.home as the literal "?".
+# sbt itself falls back to HOME, but the launcher that boots every scripted sub-build resolves its boot directory
+# and repositories from user.home, so pin it to the writable per-UID HOME.
 exec docker run "${docker_args[@]}" --entrypoint sh "$DOCKER_IMAGE" -c \
   'mkdir -p "$HOME" && git config --global --add safe.directory "*" && exec sbt -Duser.home="$HOME" --server "$@"' \
   sh ${extra_args[@]+"${extra_args[@]}"} "$@"

@@ -6,7 +6,7 @@
 // main vs classified content, guarding content leaking onto the main coordinate) and build-twice NO-CASCADE (the
 // classified content and the native.json are byte-stable across an unchanged rebuild). Both backends publish maven-style
 // to a file repo.
-scalaVersion := "3.8.4"
+scalaVersion := sys.props("scala.version")
 organization := "snx.test"
 version := "0.1.0"
 

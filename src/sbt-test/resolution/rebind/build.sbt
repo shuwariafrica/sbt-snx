@@ -5,7 +5,7 @@
 // neither, so the transitive default `-l<name>` is pushed and the link fails on an unresolvable library - proving the
 // name-match rebind acts on a name folded from a transitive descriptor, two hops away. The own-only propagation it
 // builds on is proven by resolution/transitive.
-scalaVersion := "3.8.4"
+scalaVersion := sys.props("scala.version")
 
 val base = project
   .enablePlugins(SNXPlugin)

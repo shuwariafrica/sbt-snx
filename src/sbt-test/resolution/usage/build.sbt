@@ -4,7 +4,7 @@
 val producer = project
   .enablePlugins(SNXPlugin)
   .settings(
-    scalaVersion := "3.8.4",
+    scalaVersion := sys.props("scala.version"),
     SNX.libraries := { case _ => Seq(NativeLibrary("snx_propagated_absent")) }
   )
 
@@ -12,7 +12,7 @@ val consumer = project
   .enablePlugins(SNXPlugin)
   .dependsOn(producer)
   .settings(
-    scalaVersion := "3.8.4",
+    scalaVersion := sys.props("scala.version"),
     SNX.deliverable := Executable
   )
 

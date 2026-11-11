@@ -3,7 +3,7 @@
 // publishes the SAME descriptor inside its main - and only - jar, so the scala-native pipeline propagates whether a NIR
 // project is published classified or not. A consumer then resolves both from the file repo (no inter-project
 // short-circuit, via the build-file swap) and finds each descriptor in the resolved artefact.
-scalaVersion := "3.8.4"
+scalaVersion := sys.props("scala.version")
 organization := "snx.test"
 version := "0.1.0"
 

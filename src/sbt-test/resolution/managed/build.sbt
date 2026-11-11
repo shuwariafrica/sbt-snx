@@ -1,6 +1,6 @@
 enablePlugins(SNXPlugin)
 
-scalaVersion := "3.8.4"
+scalaVersion := sys.props("scala.version")
 
 // Plain `% Test` must resolve through sbt's own path (the libraryDependencies element type is ModuleID), untouched
 // by the NativeDependency conversions.

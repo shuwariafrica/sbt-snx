@@ -18,7 +18,7 @@ concurrency:
 env:
   SBT_OPTS: "-Xmx7G -Xss4M -XX:ReservedCodeCacheSize=512M -Dsbt.server.autostart=false"
   JDK_VERSION: "21"
-  LLVM_VERSION: "22"
+  LLVM_VERSION: "23"
 
 jobs:
   tests:
@@ -40,14 +40,15 @@ jobs:
         #   runner      the GitHub-hosted runner label
         #   dockerImage set for container cells; absent means the job runs on the host and installs its own JDK/sbt
         #
-        # Renovate cannot see these image tags: its github-actions manager reads a job's `container:`/`services:`
-        # fields, not matrix data, so the JDK baseline moves here by hand. The `container:` jobs below hold the same
-        # pin and are held still by an organisation rule, so the two must be changed together.
+        # Renovate cannot see this matrix: its github-actions manager reads a job's `runs-on:`, `container:` and
+        # `services:` fields, not matrix data. The runner labels and image tags here move by hand, together with the
+        # jobs below that carry the same runner and JDK; the organisation's Renovate preset holds the JDK tag still
+        # and moves only the jobs' image digests.
         include:
-          - { triple: x86_64-linux-gnu, os: linux, arch: x86_64, env: glibc, classifier: linux-x86_64, runner: ubuntu-24.04, dockerImage: "shuwariafrica/el10-jdk:21" }
-          - { triple: aarch64-linux-gnu, os: linux, arch: aarch64, env: glibc, classifier: linux-aarch_64, runner: ubuntu-24.04-arm, dockerImage: "shuwariafrica/el10-jdk:21" }
-          - { triple: x86_64-linux-musl, os: linux, arch: x86_64, env: musl, classifier: linux-x86_64, runner: ubuntu-24.04, dockerImage: "shuwariafrica/alpine-jdk:21" }
-          - { triple: aarch64-linux-musl, os: linux, arch: aarch64, env: musl, classifier: linux-aarch_64, runner: ubuntu-24.04-arm, dockerImage: "shuwariafrica/alpine-jdk:21" }
+          - { triple: x86_64-linux-gnu, os: linux, arch: x86_64, env: glibc, classifier: linux-x86_64, runner: ubuntu-26.04, dockerImage: "shuwariafrica/el10-jdk:21" }
+          - { triple: aarch64-linux-gnu, os: linux, arch: aarch64, env: glibc, classifier: linux-aarch_64, runner: ubuntu-26.04-arm, dockerImage: "shuwariafrica/el10-jdk:21" }
+          - { triple: x86_64-linux-musl, os: linux, arch: x86_64, env: musl, classifier: linux-x86_64, runner: ubuntu-26.04, dockerImage: "shuwariafrica/alpine-jdk:21" }
+          - { triple: aarch64-linux-musl, os: linux, arch: aarch64, env: musl, classifier: linux-aarch_64, runner: ubuntu-26.04-arm, dockerImage: "shuwariafrica/alpine-jdk:21" }
           - { triple: aarch64-apple-darwin, os: osx, arch: aarch64, env: "", classifier: osx-aarch_64, runner: macos-26 }
           - { triple: x86_64-windows-msvc, os: windows, arch: x86_64, env: msvc, classifier: windows-x86_64, runner: windows-2025-vs2026 }
           - { triple: aarch64-windows-msvc, os: windows, arch: aarch64, env: msvc, classifier: windows-aarch_64, runner: windows-11-arm }
@@ -56,7 +57,7 @@ jobs:
           # component, so this is the sole cell reaching the compiler-probe fallback and the failure behind it -
           # every other Linux cell resolves its ABI from the triple alone. `env: glibc` is right: the triple cannot
           # say so, but the toolchain is glibc and the probe resolves it.
-          - { triple: x86_64-suse-linux, os: linux, arch: x86_64, env: glibc, classifier: linux-x86_64, runner: ubuntu-24.04, dockerImage: "shuwariafrica/opensuse-jdk:21" }
+          - { triple: x86_64-suse-linux, os: linux, arch: x86_64, env: glibc, classifier: linux-x86_64, runner: ubuntu-26.04, dockerImage: "shuwariafrica/opensuse-jdk:21" }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     env:
@@ -71,16 +72,16 @@ jobs:
           fetch-depth: 0
       - name: "[host] Set up Java"
         if: ${{ !matrix.dockerImage }}
-        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: microsoft
           java-version: ${{ env.JDK_VERSION }}
           check-latest: true
       - name: "[host] Set up sbt"
         if: ${{ !matrix.dockerImage }}
-        uses: sbt/setup-sbt@c7d2d6258b4bd0d3ec5129e6b3453199d3c79729 # v1.5.8
+        uses: sbt/setup-sbt@67d461eba2c4753196c230e02da850757ba4775e # v1.5.14
       - name: Set up Coursier cache
-        uses: coursier/cache-action@95e5b1029b6b86e7bac033ee44a0697d8a527d2d # v8.1.1
+        uses: coursier/cache-action@ee0650f98295f27a505e4bfd284c9bfaa913a465 # v9.0.1
       - name: Generate disposable signing key
         if: ${{ matrix.os == 'linux' }}
         shell: bash
@@ -123,6 +124,11 @@ jobs:
           # MSYS2 clang64 toolchain (which targets x86_64-w64-windows-gnu) forces the MinGW path and bypasses the
           # MSVC-targeting system clang entirely. vcvarsall is intentionally NOT run for this cell.
           C:\msys64\usr\bin\pacman -S --needed --noconfirm mingw-w64-clang-x86_64-toolchain
+          # Scala Native 0.5.12 declares `typedef int pid_t` for every Windows target (gc/shared/ThreadUtil.h), while
+          # mingw-w64 headers from 14.0.0.r302 on reach their own 64-bit pid_t through <wchar.h>, so no Scala Native
+          # program compiles against them. Hold the headers at the last package before that change until a Scala
+          # Native release stops declaring pid_t on MinGW.
+          C:\msys64\usr\bin\pacman -U --noconfirm https://repo.msys2.org/mingw/clang64/mingw-w64-clang-x86_64-headers-14.0.0.r283.ga7cb47123-1-any.pkg.tar.zst
           "LLVM_BIN=C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
       - name: "[${{ matrix.triple }}] Unit tests"
@@ -139,8 +145,8 @@ jobs:
 
   static-analysis:
     name: analyse
-    runs-on: ubuntu-24.04
-    container: shuwariafrica/el10-jdk:21@sha256:7b2fabc819e283d79a9afde3619d66eb2c2717c4f9de12a4cefc1db8daaa888d
+    runs-on: ubuntu-26.04
+    container: shuwariafrica/el10-jdk:21@sha256:06f9ac141b63cd2205a19437b37ba0ee38d92709eddbbf18e954a2cba53ea8cd
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -148,7 +154,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Set up Coursier cache
-        uses: coursier/cache-action@95e5b1029b6b86e7bac033ee44a0697d8a527d2d # v8.1.1
+        uses: coursier/cache-action@ee0650f98295f27a505e4bfd284c9bfaa913a465 # v9.0.1
       - name: Verify Source Formatting
         id: scalafmt
         continue-on-error: true
@@ -182,8 +188,8 @@ jobs:
     name: publish
     needs: [ tests, static-analysis ]
     if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
-    runs-on: ubuntu-24.04
-    container: shuwariafrica/el10-jdk:21@sha256:7b2fabc819e283d79a9afde3619d66eb2c2717c4f9de12a4cefc1db8daaa888d
+    runs-on: ubuntu-26.04
+    container: shuwariafrica/el10-jdk:21@sha256:06f9ac141b63cd2205a19437b37ba0ee38d92709eddbbf18e954a2cba53ea8cd
     timeout-minutes: 30
     permissions:
       contents: read
@@ -193,11 +199,11 @@ jobs:
         with:
           fetch-depth: 0
       - name: Import signing key
-        uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7
+        uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7.0.0
         with:
           gpg_private_key: ${{ secrets.OSS_PUBLISH_USER_SIGNING_KEY }}
       - name: Set up Coursier cache
-        uses: coursier/cache-action@95e5b1029b6b86e7bac033ee44a0697d8a527d2d # v8.1.1
+        uses: coursier/cache-action@ee0650f98295f27a505e4bfd284c9bfaa913a465 # v9.0.1
       - name: ${{ startsWith(github.ref, 'refs/tags/v') && 'Assemble Release' || 'Publish Snapshots' }}
         run: sbt --server -batch publishSigned
         env:
@@ -214,14 +220,14 @@ jobs:
     name: release
     needs: publish
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
       - name: Mint Release Bot Token
         id: release-bot
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}

@@ -313,7 +313,7 @@ application that consumes both.
 
 ```scala
 // build.sbt
-scalaVersion := "3.8.4"
+scalaVersion := "3.10.1"
 organization := "com.example"
 version      := "0.1.0"
 
@@ -358,8 +358,8 @@ official Scala Native plugin, so sbt-snx adds `snxPlatform`, enabling sbt-snx on
 
 ```scala
 val core = projectMatrix
-  .jvmPlatform(scalaVersions = Seq("3.8.4"))
-  .snxPlatform(scalaVersions = Seq("3.8.4"), settings = Seq(SNX.deliverable := Executable))
+  .jvmPlatform(scalaVersions = Seq("3.10.1"))
+  .snxPlatform(scalaVersions = Seq("3.10.1"), settings = Seq(SNX.deliverable := Executable))
 ```
 
 This expands into a JVM subproject (`core`) and a Scala Native subproject (`coreNative`), each compiling its shared
