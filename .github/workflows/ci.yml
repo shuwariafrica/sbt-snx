@@ -86,10 +86,11 @@ jobs:
         if: ${{ matrix.os == 'linux' }}
         shell: bash
         run: |
-          export GNUPGHOME="$PWD/.gnupg-ci"
-          mkdir -p "$GNUPGHOME"; chmod 700 "$GNUPGHOME"
-          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
-          printf 'pinentry-mode loopback\nbatch\n' > "$GNUPGHOME/gpg.conf"
+          export GNUPGHOME="${PWD}/.gnupg-ci"
+          mkdir -p "${GNUPGHOME}"
+          chmod 700 "${GNUPGHOME}"
+          printf 'GNUPGHOME=%s\n' "${GNUPGHOME}" >> "${GITHUB_ENV}"
+          printf 'pinentry-mode loopback\nbatch\n' > "${GNUPGHOME}/gpg.conf"
           gpg --batch --gen-key <<'EOF'
           %no-protection
           Key-Type: RSA
@@ -105,7 +106,8 @@ jobs:
         run: |
           brew update
           brew install "llvm@${LLVM_VERSION}"
-          echo "$(brew --prefix "llvm@${LLVM_VERSION}")/bin" >> "$GITHUB_PATH"
+          prefix=$(brew --prefix "llvm@${LLVM_VERSION}")
+          printf '%s/bin\n' "${prefix}" >> "${GITHUB_PATH}"
       - name: "[Windows] Set up MSVC"
         if: ${{ matrix.os == 'windows' && matrix.env == 'msvc' }}
         shell: pwsh
@@ -175,14 +177,58 @@ jobs:
           HDR_OUTCOME: ${{ steps.headers.outcome }}
         run: |
           failed=""
-          [[ "$FMT_OUTCOME" == "failure" ]] && failed="$failed scalafmtCheckAll"
-          [[ "$FIX_OUTCOME" == "failure" ]] && failed="$failed scalafixAll"
-          [[ "$HDR_OUTCOME" == "failure" ]] && failed="$failed headerCheckAll"
-          
-          if [[ -n "$failed" ]]; then
-            echo "::error::Static analysis checks failed:$failed"
+          if [[ "${FMT_OUTCOME}" == "failure" ]]; then failed="${failed} scalafmtCheckAll"; fi
+          if [[ "${FIX_OUTCOME}" == "failure" ]]; then failed="${failed} scalafixAll"; fi
+          if [[ "${HDR_OUTCOME}" == "failure" ]]; then failed="${failed} headerCheckAll"; fi
+          if [[ -n "${failed}" ]]; then
+            printf '::error::Static analysis checks failed:%s\n' "${failed}"
             exit 1
           fi
+      - name: Verify scripts are executable
+        shell: bash
+        run: |
+          for script in release project/scripts/run-sbt.sh; do
+            mode=$(git ls-files --stage -- "${script}" | cut -d ' ' -f 1)
+            if [[ "${mode}" != 100755 ]]; then
+              printf '::error::%s is committed as %s; make it executable with: git update-index --chmod=+x %s\n' "${script}" "${mode:-untracked}" "${script}"
+              exit 1
+            fi
+          done
+
+  # The repository's own shell: the workflows' run blocks, release and run-sbt.sh. actionlint calls ShellCheck with
+  # --norc, so the .shellcheckrc baseline reaches the run blocks only through SHELLCHECK_OPTS. The actionlint image has
+  # no git, so actionlint is named its configuration, and the image's own user cannot write the runner's work directory.
+  lint:
+    name: lint / workflows and scripts
+    runs-on: ubuntu-26.04
+    container:
+      image: docker.io/rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+      options: --user root
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Lint workflows
+        env:
+          SHELLCHECK_OPTS: --enable=all
+        run: actionlint -config-file .github/actionlint.yaml .github/workflows/*.yml
+      - name: Lint scripts
+        run: shellcheck release project/scripts/run-sbt.sh
+
+  format:
+    name: format / scripts
+    runs-on: ubuntu-26.04
+    container: docker.io/mvdan/shfmt:v3.14.1-alpine@sha256:c7a0dfa73dfea80e9d9e185c655b44759eea2df85dec142295bcc0bb600c6266
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check script formatting
+        run: shfmt -d release project/scripts/run-sbt.sh
 
   publish:
     name: publish
@@ -234,14 +280,9 @@ jobs:
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ steps.release-bot.outputs.token }}
+          TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
-          prerelease_flag=""
-          if [[ "${{ github.ref_name }}" == *-* ]]; then
-            prerelease_flag="--prerelease"
-          fi
-          gh release create "${{ github.ref_name }}" \
-            --repo "${{ github.repository }}" \
-            --title "${{ github.ref_name }}" \
-            --generate-notes \
-            --verify-tag \
-            $prerelease_flag
+          flags=(--generate-notes --verify-tag)
+          if [[ "${TAG}" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "${TAG}" --repo "${REPOSITORY}" --title "${TAG}" "${flags[@]}"
