@@ -304,6 +304,7 @@ coordinate. A consumer resolves such a dependency with `% NativeClassifier`. Eit
 | `SNX.config`         | `Native` (task)                               | resolved configuration            |
 | `SNX.link`           | `File` (task)                                 | links the binary                  |
 | `SNX.classified`     | `Boolean`                                     | `false` (publish per OS/arch)     |
+| `SNX.axis`           | `VirtualAxis.PlatformAxis` (a value)          | the axis of `snxPlatform` rows    |
 
 `SNX.host` is the build host's `TargetPlatform`. `run`, `runMain`, and `test` are overridden for Scala Native.
 
@@ -367,6 +368,12 @@ This expands into a JVM subproject (`core`) and a Scala Native subproject (`core
 `scala` sources plus its own platform source directory (`scalajvm` / `scalanative`). `snxPlatform` mirrors
 `nativePlatform`'s overloads, also taking `axisValues` and either `settings` or a `configure: Project => Project` for
 per-row configuration, so a build can migrate from the official plugin by replacing `nativePlatform` with `snxPlatform`.
+
+The row is on `SNX.axis`, not `VirtualAxis.native`: from sbt 2.1 the matrix enables the official plugin on every row of
+that axis. Its subproject id and source directories are a native row's all the same. Find a matrix's sbt-snx row with
+`snxNative` where you would use the matrix's `native` - `.dependsOn(core.snxNative("3.10.1"))` - and select it by
+`SNX.axis` in `defaultAxes` or `configurePlatforms`. A matrix that depends on another resolves its sbt-snx rows on either
+sbt line.
 
 ## License
 

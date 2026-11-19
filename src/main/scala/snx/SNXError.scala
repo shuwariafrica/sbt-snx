@@ -37,6 +37,9 @@ object SNXError:
     */
   final case class CMakeBuildFailed(message: String) extends SNXError(message)
 
+  /** A vendored Git source that could not be fetched: a `git` invocation that failed against its repository or ref. */
+  final case class FetchFailed(message: String) extends SNXError(message)
+
   /** A vendored backend output (archive or header directory) that lies outside the build staging directory, so the
     * build cache cannot capture it.
     */

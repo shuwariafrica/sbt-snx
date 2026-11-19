@@ -149,6 +149,11 @@ jobs:
       - name: "[${{ matrix.triple }}] Scripted tests"
         shell: bash
         run: ./project/scripts/run-sbt.sh -batch "scripted"
+      # The latest sbt line changes sbt's own behaviour, not the native link, so one cell runs the suite under it too.
+      - name: "[${{ matrix.triple }}] Scripted tests on the latest sbt"
+        if: ${{ matrix.triple == 'x86_64-linux-gnu' }}
+        shell: bash
+        run: ./project/scripts/run-sbt.sh -batch "scriptedLatest"
 
   static-analysis:
     name: analyse

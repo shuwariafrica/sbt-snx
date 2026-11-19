@@ -874,7 +874,7 @@ object SNXPlugin extends AutoPlugin:
         ref,
         "--",
         ".")
-    val _ = Resolvers.creates(staging) {
+    val _ = materialise(staging) {
       val shallow = scala.util.Try {
         git(None, "init", "--bare", "-q", repository.getAbsolutePath)
         git(None, "--git-dir", repository.getAbsolutePath, "remote", "add", "origin", uri)
@@ -894,7 +894,16 @@ object SNXPlugin extends AutoPlugin:
   // Run git with automatic maintenance off. A vendored repository is fetched once and read once, so the background
   // repack `git fetch` would otherwise start serves nothing and outlives the call that triggered it.
   private def git(cwd: Option[File], arguments: String*): Unit =
-    Resolvers.run(cwd, (Seq("git", "-c", "gc.auto=0", "-c", "maintenance.auto=false") ++ arguments)*)
+    val command = Seq("git", "-c", "gc.auto=0", "-c", "maintenance.auto=false") ++ arguments
+    if Process(command, cwd).! != 0 then fail(SNXError.FetchFailed(s"snx: ${command.mkString(" ")} failed"))
+
+  // Create `directory` with `build` unless it already exists, leaving no partial directory behind when `build` fails.
+  private def materialise(directory: File)(build: => Unit): File =
+    if !directory.exists then
+      val attempt = scala.util.Try(build)
+      if attempt.isFailure then IO.delete(directory)
+      attempt.get
+    directory
 
   // Resolve a Git `ref` to the commit it names, so the vendored cache keys on the actual commit rather than a
   // possibly-moving `ref`: a moved branch or force-moved tag then invalidates the archive, and two hosts resolving the
