@@ -1,7 +1,7 @@
 import scala.scalanative.unsafe.*
 
 // snx_glue lives in src/main/resources/scala-native/glue.c, which #includes the vendored answer.h and calls snx_answer
-// from libanswer.a - built by the Command backend (clang + archiver), not CMake.
+// from libanswer.a - built with libbase.a by the Command backend (clang + archiver), not CMake.
 @extern object glue:
   def snx_glue(): CInt = extern
 

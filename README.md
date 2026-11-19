@@ -69,8 +69,8 @@ libc) is a separate `NativeLibrary` concern, below.
 
 A vendored C library must match this CRT choice, or the link mixes runtimes: on MSVC, build it against the same static
 CRT by passing `-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>` (with
-`-DCMAKE_POLICY_DEFAULT_CMP0091=NEW`) through the CMake backend's per-platform `flags`; on musl, link it statically (the
-`Vendored` default), since a fully static binary cannot load a shared library.
+`-DCMAKE_POLICY_DEFAULT_CMP0091=NEW`) through the CMake library's per-platform `configure`; on musl, link it statically
+(the `Vendored` default), since a fully static binary cannot load a shared library.
 
 Linux links are marked non-executable-stack (`-Wl,-z,noexecstack`). Scala Native's safepoint trampolines carry no
 `.note.GNU-stack` section, so GNU ld would otherwise infer an executable stack for the whole link, leaving every
@@ -112,7 +112,7 @@ here.
 A vendored library follows `SNX.mode`: its CMake `CMAKE_BUILD_TYPE` is `Debug` for `Mode.debug`, `MinSizeRel` for
 `Mode.releaseSize`, and `Release` otherwise, and the vendored build cache keys on it (a dev `Debug` build and a release
 build are cached separately). LTO does not extend into a vendored build (it is a separate compilation) - pass `-flto`
-through the backend's own `cmake(targets, flags)` if you need it there.
+through the library's `configure` (`-DCMAKE_C_FLAGS=-flto`) if you need it there.
 
 `SNX.includeDirs` and `SNX.libDirs` add `-I`/`-L` directories - host-discovered paths are dropped when cross-targeting,
 so a cross build is not contaminated by the host toolchain's directories - and `SNX.clang`/`SNX.clangPP` set the
@@ -232,18 +232,49 @@ SNX.libraries += NativeLibrary(
 `local(directory)` builds a directory under the project (resolved against the project, then the build root);
 `git(uri, ref)` clones a Git repository at a `ref` (a tag, commit, or branch), resolving the ref to its current commit
 and caching on that commit, so moving a branch or force-moving a tag rebuilds - a full commit SHA needs no resolution,
-pin one for a network-free, fully reproducible build. `cmake` configures, builds, installs, and collects **every** library and
-header under the install prefix - not only the `targets` you name, but whatever the project's `install()` rules emit, so
-a multi-library project (aws-lc installs both `libssl` and `libcrypto`) contributes them all; scope the project's install
-(or its `targets`) to what you need. It builds them static or shared per the library's `.linkage` (`BUILD_SHARED_LIBS` is
-derived - a static archive by default, a shared library under `.linkage(Dynamic)`), and per-platform configure flags pass
-as `cmake(targets, flags)`. `options` adds the library's per-platform link closure -
-the transitive `-l`/flags/defines a static archive cannot carry itself - applied at this provisioning site and never
-published (distinct from the CMake configure `flags`). The build runs in a normal toolchain environment, so a
-CMakeLists using `find_package` or a toolchain file behaves as it does standalone. Builds are cached locally, keyed on
-the source (a `local` directory's content hash, or a `git` origin's resolved commit - the ref is resolved via
-`git ls-remote`, so a moving branch or force-moved tag rebuilds; when the remote is unreachable the cache falls back to
-the ref), the configuration, and the resolved toolchain.
+pin one for a network-free, fully reproducible build. Builds are cached locally, keyed on the source (a `local`
+directory's content hash, or a `git` origin's resolved commit; when the remote is unreachable the cache falls back to
+the ref), the configuration, and the resolved toolchain. The build runs in a normal toolchain environment, so a
+CMakeLists using `find_package` or a toolchain file behaves as it does standalone.
+
+`cmake(targets*)` configures the project, builds `targets` (none builds the project's default), installs it into a
+staging prefix, and links **every** library the install writes there, so a multi-library project (brotli installs
+`brotlienc`, `brotlidec` and `brotlicommon`) contributes them all. It builds them static or shared per the library's
+`.linkage` (`BUILD_SHARED_LIBS` is derived - a static archive by default, a shared library under `.linkage(Dynamic)`).
+Its settings are named setters, chained in any order:
+
+```scala
+Vendored
+  .git("https://github.com/facebook/zstd.git", "v1.5.7")
+  .cmake("libzstd_static")
+  .directory("build/cmake")
+  .configure { case _ => Seq("-DZSTD_BUILD_SHARED=OFF", "-DZSTD_BUILD_PROGRAMS=OFF", "-DZSTD_BUILD_TESTS=OFF") }
+```
+
+- `configure { ... }` passes per-platform configure flags (`-D<option>=<value>`), after the plugin's own, so they can
+  override them.
+- `directory(path)` names the directory holding the project's top-level `CMakeLists.txt`, relative to the source root,
+  for a repository that keeps it below the root (zstd's `build/cmake`). The whole source is still fetched and keyed, so
+  the project may read files elsewhere in it. An absolute path, or one reaching outside the source, fails the build
+  before anything is fetched.
+- `moduleOverrides(dir)` prepends a directory to `CMAKE_MODULE_PATH`, so its modules take precedence over the
+  project's own.
+- `options { ... }` adds the library's per-platform link closure - the transitive `-l`/flags/defines a static archive
+  cannot carry itself - applied at this provisioning site and never published.
+
+`cmake --install` runs every `install()` rule the project has - it selects by component, never by target - so naming
+`targets` does not narrow the install: a rule for a target left unbuilt fails it, as does one writing to a fixed
+absolute path the build cannot write. Turn such a rule off through the project's own option in `configure` (brotli's
+tools: `-DBROTLI_BUILD_TOOLS=OFF`). The install prefix is set at configure as well as at install, so a destination the
+project computes at configure (GNUInstallDirs' `CMAKE_INSTALL_FULL_<dir>`, brotli's man pages) lands under it too.
+Every path CMake records in `install_manifest.txt` must then lie under the staging prefix: where a fixed absolute
+destination is writable (a root container, an administrator on Windows), the install succeeds and writes into the
+host, and the build fails naming each such path.
+
+Several archives link in the order of their paths under the prefix. On Linux they link as one group
+(`-Wl,--start-group` ... `-Wl,--end-group`), so references among them resolve in any order, cycles included; macOS and
+MSVC take them ungrouped, their linkers resolving archives without regard to order. Order still decides which of two
+archives defining one symbol supplies it. A `wholeArchive` library loads every member, so it takes no group.
 
 On Linux and macOS the CMake backend builds with the same clang the Scala Native link uses (honouring an `SNX.clang`
 override); on Windows it uses CMake's default MSVC toolchain, which is ABI-compatible with the Scala Native link. It is
@@ -252,9 +283,10 @@ build with a clear error rather than producing an unlinkable archive.
 
 For a build CMake does not cover - Make, Autotools, a hand-rolled script - `command(token) { ctx => ... }` is the
 escape hatch: the function builds from `ctx.source` into `ctx.staging` and returns the archives and header directories
-to fold in (an `Artefacts`, whose paths must lie under `ctx.staging` so they are cached). A build system that only
-builds in place - a Makefile, most autotools projects - copies `ctx.source` into `ctx.staging` and builds there, so its
-outputs land where the cache can capture them. `command` allows use of any toolchain - MinGW included.
+to fold in (an `Artefacts`, whose paths must lie under `ctx.staging` so they are cached). The archives link in the
+order returned, grouped on Linux and MinGW as a CMake build's are. A build system that only builds in place - a
+Makefile, most autotools projects - copies `ctx.source` into `ctx.staging` and builds there, so its outputs land where
+the cache can capture them. `command` allows use of any toolchain - MinGW included.
 
 `token` is the build's cache identity, and keeping it correct is your responsibility. The function is opaque to the
 plugin, so the cache keys on `token` alone - the source content, the toolchain, and the resolved runtime/linkage/mode

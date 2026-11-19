@@ -68,8 +68,8 @@ def scriptedSettings: Seq[Def.Setting[?]] = Seq(
   scripted / excludeFilter := {
     val os = sys.env.get("SNX_EXPECT_OS")
     val env = sys.env.get("SNX_EXPECT_ENV")
-    // `detect` reads the per-cell platform ground truth the CI matrix injects, so it needs SNX_EXPECT_OS set. Both
-    // fixtures named `static` link a static C runtime, which only musl and MSVC support. The Linux-only set covers the
+    // `detect` reads the per-cell platform ground truth the CI matrix injects, so it needs SNX_EXPECT_OS set. Every
+    // fixture named `static` links a static C runtime, which only musl and MSVC support. The Linux-only set covers the
     // renderings that have no macOS or Windows form or no proven cell: the per-library -Bstatic bracket (`perlib`) and
     // its de-duplicating whole-archive sibling (`dedup`), the C-driver library harness (`library`), the shell-script
     // clang wrapper (`clang`), a dynamically-linked vendored library in an executable and in a NIR test link

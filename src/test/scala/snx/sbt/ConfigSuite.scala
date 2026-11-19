@@ -261,6 +261,126 @@ class ConfigSuite extends munit.FunSuite:
     val dynamicVendored = vendored.linkage { case _ => Linkage.Dynamic }
     intercept[SNXError.UnsupportedLinkage](SNXPlugin.rebind(NativeConfig.empty, requirements, Map("foo" -> dynamicVendored), msvc, stub))
 
+  private val second = new java.io.File("/x/libbar.a")
+  private val secondPath = second.getAbsolutePath.nn
+  private val group = Seq("-Wl,--start-group", archivePath, secondPath, "-Wl,--end-group")
+
+  test("archiveLink groups two or more archives on Linux and MinGW, in Plain and Framework mode, and not one"):
+    assertEquals(SNXPlugin.archiveLink(glibc, LinkMode.Plain, Seq(archive, second)), group)
+    assertEquals(SNXPlugin.archiveLink(mingw, LinkMode.Plain, Seq(archive, second)), group)
+    assertEquals(SNXPlugin.archiveLink(glibc, LinkMode.Framework, Seq(archive, second)), group)
+    assertEquals(SNXPlugin.archiveLink(glibc, LinkMode.Plain, Seq(archive)), Seq(archivePath))
+    assertEquals(SNXPlugin.archiveLink(mingw, LinkMode.Plain, Seq(archive)), Seq(archivePath))
+
+  test("archiveLink takes several archives ungrouped on macOS and MSVC"):
+    assertEquals(SNXPlugin.archiveLink(darwin, LinkMode.Plain, Seq(archive, second)), Seq(archivePath, secondPath))
+    assertEquals(SNXPlugin.archiveLink(msvc, LinkMode.Plain, Seq(archive, second)), Seq(archivePath, secondPath))
+
+  test("archiveLink whole-archives each archive on its own, with no group, on every runtime"):
+    assertEquals(
+      SNXPlugin.archiveLink(glibc, LinkMode.WholeArchive, Seq(archive, second)),
+      Seq("-Wl,--whole-archive", archivePath, "-Wl,--no-whole-archive", "-Wl,--whole-archive", secondPath, "-Wl,--no-whole-archive")
+    )
+    Seq(mingw, darwin, msvc).foreach: runtime =>
+      val each = Seq(archivePath, secondPath).flatMap(Modifier.wholeArchivePath(runtime, _))
+      assertEquals(SNXPlugin.archiveLink(runtime, LinkMode.WholeArchive, Seq(archive, second)), each, runtime.toString)
+
+  test("the rebind links a vendored library's several archives as one group, its closure after the group"):
+    val requirements = Usage(Seq("foo"), Nil, Nil, Nil, Nil, false)
+    val library = NativeLibrary("foo", Vendored.local("vendor/foo").cmake("foo").options { case _ => Flags.libraries("m") })
+    val pair: (Vendored, Linkage) => (Artefacts, Boolean) = (_, _) => (Artefacts(Seq(archive, second), Seq.empty), true)
+    val (config, _) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("foo" -> library), glibc, pair)
+    assertEquals(config.linkingOptions, group :+ "-lm")
+
+  test("collected keeps a CMake install's archives, sorted by their path under the prefix, whatever the input order"):
+    val prefix = new java.io.File("/staging/prefix")
+    def under(paths: String*) = paths.map(new java.io.File(prefix, _))
+    val found = under("lib/libzz_top.a", "lib64/libmm_mid.a", "include/multi.h", "lib/libaa_base.a", "lib/libshared.so")
+    assertEquals(Backend.collected(glibc, Linkage.Static, prefix, found), under("lib/libaa_base.a", "lib/libzz_top.a", "lib64/libmm_mid.a"))
+    assertEquals(Backend.collected(glibc, Linkage.Dynamic, prefix, found), under("lib/libshared.so"))
+    val msvcFound = under("lib/zz_top.lib", "lib/libaa_base.a", "bin/zz_top.dll", "lib/aa_base.lib")
+    assertEquals(Backend.collected(msvc, Linkage.Static, prefix, msvcFound), under("lib/aa_base.lib", "lib/zz_top.lib"))
+
+  private val manifestDir = new java.io.File("target/snx-manifest-test")
+  private val installPrefix = new java.io.File(manifestDir, "prefix")
+  private def manifest(name: String, paths: java.io.File*): java.io.File =
+    val file = new java.io.File(manifestDir, name)
+    // CMake ends the manifest without a final newline.
+    sbt.io.IO.write(file, paths.map(_.getAbsolutePath).mkString("\n"))
+    file
+
+  test("requireInstalled passes a CMake install manifest whose every path lies under the staging prefix"):
+    val inside = Seq(new java.io.File(installPrefix, "lib/libfoo.a"), new java.io.File(installPrefix, "share/man/man3/foo.3"))
+    Backend.requireInstalled(manifest("inside.txt", inside*), installPrefix)
+
+  test("requireInstalled fails naming each installed path outside the prefix, read through its normal form"):
+    val inside = new java.io.File(installPrefix, "lib/libfoo.a")
+    val sibling = new java.io.File(manifestDir, "prefix-other/foo.3")
+    val climbed = new java.io.File(installPrefix, "../escape.txt")
+    val error =
+      intercept[SNXError.OutputOutsideStaging](Backend.requireInstalled(manifest("outside.txt", inside, sibling, climbed), installPrefix))
+    assert(clue(error.toString).contains(sibling.getAbsolutePath))
+    assert(clue(error.toString).contains(climbed.getAbsolutePath))
+    assert(!clue(error.toString).contains(inside.getAbsolutePath))
+
+  test("requireInstalled reads the manifest's unterminated last line"):
+    val last = new java.io.File(manifestDir, "outside/foo.1")
+    val error = intercept[SNXError.OutputOutsideStaging](
+      Backend.requireInstalled(manifest("last.txt", new java.io.File(installPrefix, "lib/libfoo.a"), last), installPrefix))
+    assert(clue(error.toString).contains(last.getAbsolutePath))
+
+  test("requireInstalled fails when the install left no manifest to check"):
+    intercept[SNXError.CMakeBuildFailed](Backend.requireInstalled(new java.io.File(manifestDir, "absent.txt"), installPrefix))
+
+  test("projectDirectory accepts a directory inside the vendored source and gives its normal form"):
+    assertEquals(Backend.projectDirectory("."), java.nio.file.Paths.get("").nn)
+    assertEquals(Backend.projectDirectory("build/cmake"), java.nio.file.Paths.get("build", "cmake").nn)
+    assertEquals(Backend.projectDirectory("build/../build/cmake"), java.nio.file.Paths.get("build", "cmake").nn)
+
+  test("projectDirectory refuses an absolute directory and one that climbs out of the vendored source"):
+    Seq("/x", "../x", "build/../../x").foreach: directory =>
+      val error = intercept[SNXError.DirectoryOutsideSource](Backend.projectDirectory(directory))
+      assert(clue(error.toString).contains(s"'$directory'"))
+
+  test("projectDirectory refuses the Windows rooted, drive-absolute and drive-relative forms"):
+    assume(java.io.File.separatorChar == '\\', "java.nio gives these forms a root only under Windows path semantics")
+    Seq("\\x", "C:\\x", "C:x").foreach: directory =>
+      intercept[SNXError.DirectoryOutsideSource](Backend.projectDirectory(directory))
+
+  private def cmakeKey(library: Vendored): Seq[String] = library.backend.cacheKey(glibc)
+
+  test("the CMake cache key changes with the project directory, and equivalent spellings share one key"):
+    val base = Vendored.local("v").cmake("t")
+    assertNotEquals(cmakeKey(base), cmakeKey(base.directory("build/cmake")))
+    assertEquals(cmakeKey(base.directory("build/cmake")), cmakeKey(base.directory("build/../build/cmake")))
+    assertEquals(cmakeKey(base), cmakeKey(base.directory("./")))
+
+  test("the CMake setters chain in any order, each replacing only its own setting"):
+    val modules = new java.io.File("cmake-modules")
+    val library = Vendored
+      .local("v")
+      .cmake("a", "b")
+      .options { case _ => Flags.libraries("m") }
+      .directory("first")
+      .configure { case NativeRuntime.Linux(_, _) => Seq("-DX=ON") }
+      .moduleOverrides(modules)
+      .directory("build/cmake")
+    library.backend match
+      case cmake: Backend.CMake =>
+        assertEquals(cmake.targets, Seq("a", "b"))
+        assertEquals(cmake.directory, "build/cmake")
+        assertEquals(cmake.moduleOverrides, Some(modules))
+        assertEquals(cmake.flags.applyOrElse(glibc, (_: NativeRuntime) => Nil), Seq("-DX=ON"))
+        assert(!cmake.flags.isDefinedAt(darwin))
+      case Backend.Command(_, _) => fail("a CMake library carries a CMake backend")
+    assertEquals(library.closureFor(glibc), Flags.libraries("m"))
+
+  test("a CMake setter takes the directory as a path string and is not offered on a command build"):
+    val file = compiletime.testing.typeCheckErrors("""Vendored.local("v").cmake("x").directory(new java.io.File("build/cmake"))""")
+    assert(file.exists(_.message.contains("java.io.File")), file.map(_.message).mkString("\n"))
+    val command = compiletime.testing.typeCheckErrors("""Vendored.local("v").command("t")(_ => Artefacts.empty).directory("build/cmake")""")
+    assert(command.exists(_.message.contains("directory is not a member of snx.sbt.Vendored")), command.map(_.message).mkString("\n"))
+
   test("enforceMultithreading forces multithreading on, leaves it untouched, or fails when the project disabled it"):
     assertEquals(SNXPlugin.enforceMultithreading(NativeConfig.empty, required = true, None).multithreading, Some(true))
     assertEquals(
@@ -291,16 +411,16 @@ class ConfigSuite extends munit.FunSuite:
     assertEquals(Backend.cmakeBuildType(Mode.releaseFull), "Release")
     assertEquals(Backend.cmakeBuildType(Mode.releaseSize), "MinSizeRel")
 
-  test("compilerPin pins the CMake C/C++ compiler on Linux and macOS, and leaves CMake's default detection on Windows"):
+  test("compilerPin pins the CMake C/C++ compiler through CC and CXX on Linux and macOS, and leaves CMake's default detection on Windows"):
     val clang = new java.io.File("bin/clang")
     val clangPP = new java.io.File("bin/clang++")
-    val pin = Seq(s"-DCMAKE_C_COMPILER=${clang.getAbsolutePath}", s"-DCMAKE_CXX_COMPILER=${clangPP.getAbsolutePath}")
+    val pin = Seq("CC" -> clang.getAbsolutePath.nn, "CXX" -> clangPP.getAbsolutePath.nn)
     // Linux/macOS: the vendored C is built by the same clang the SN link uses (honouring SNX.clang). Windows: MSVC is
     // CMake's default and ABI-compatible with the clang-windows-msvc link, so it is left to CMake's own detection.
     assertEquals(Backend.compilerPin(glibc, clang, clangPP), pin, "Linux pins the resolved clang")
     assertEquals(Backend.compilerPin(darwin, clang, clangPP), pin, "macOS pins the resolved clang")
-    assertEquals(Backend.compilerPin(msvc, clang, clangPP), Seq.empty[String], "MSVC leaves CMake's default (cl.exe)")
-    assertEquals(Backend.compilerPin(mingw, clang, clangPP), Seq.empty[String], "MinGW (Windows) emits no pin")
+    assertEquals(Backend.compilerPin(msvc, clang, clangPP), Seq.empty[(String, String)], "MSVC leaves CMake's default (cl.exe)")
+    assertEquals(Backend.compilerPin(mingw, clang, clangPP), Seq.empty[(String, String)], "MinGW (Windows) emits no pin")
 
   test("isFullSha recognises a full SHA-1/SHA-256 hex commit and rejects a tag, branch, short, uppercase, or non-hex ref"):
     assert(SNXPlugin.isFullSha("a" * 40), "40-hex is a SHA-1")

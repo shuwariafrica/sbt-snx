@@ -27,16 +27,17 @@ import snx.NativeRuntime
 import snx.SNXError
 
 /** A C/C++ library built from source and folded into the link. Declared through the factories on [[Vendored$ Vendored]]:
-  * an [[Origin]], a backend, and per-platform [[options]].
+  * an [[Origin]], a backend, and per-platform [[options]]; a CMake build is a [[Vendored$.CMake Vendored.CMake]], which
+  * adds its CMake settings.
   */
-final class Vendored private[sbt] (
+sealed class Vendored private[sbt] (
   private[sbt] val origin: Origin,
   private[sbt] val backend: Backend,
   private val closure: PartialFunction[NativeRuntime, Flags])
     derives CanEqual:
 
   /** Attach this library's per-platform link closure - the transitive `-l`/flags a static archive does not carry.
-    * Distinct from a CMake backend's `flags`, which configure the C build.
+    * Distinct from a CMake build's `configure` flags, which configure the C build.
     */
   def options(closure: PartialFunction[NativeRuntime, Flags]): Vendored = new Vendored(origin, backend, closure)
 
@@ -46,6 +47,34 @@ end Vendored
 
 /** Origin factories for [[Vendored]]. */
 object Vendored:
+
+  /** A [[Vendored]] library built with CMake, from [[Origin.cmake]]. Each setter returns a new value with that one
+    * setting replaced, so they chain in any order and a setter called twice keeps the last value.
+    */
+  final class CMake private[sbt] (origin: Origin, settings: Backend.CMake, closure: PartialFunction[NativeRuntime, Flags])
+      extends Vendored(origin, settings, closure):
+
+    /** Per-platform configure flags (`-D<option>=<value>`), passed after the plugin's own, so one can override them. A
+      * runtime the function does not match configures with none.
+      */
+    def configure(flags: PartialFunction[NativeRuntime, Seq[String]]): CMake =
+      new CMake(origin, settings.copy(flags = flags), closure)
+
+    /** The directory holding the project's top-level `CMakeLists.txt`, relative to the vendored source root (default
+      * `.`), for a repository that keeps its CMake project in a subdirectory (zstd's `build/cmake`). The whole source
+      * is still fetched and keyed, so the project may read files elsewhere in it, as zstd's reads `../../lib`. A path
+      * that is absolute or reaches outside the source fails the build with
+      * [[snx.SNXError$.DirectoryOutsideSource DirectoryOutsideSource]] before the source is fetched.
+      */
+    def directory(path: String): CMake = new CMake(origin, settings.copy(directory = path), closure)
+
+    /** A directory prepended to `CMAKE_MODULE_PATH`, whose modules then take precedence over the project's own. Its
+      * content is part of the build's cache key.
+      */
+    def moduleOverrides(directory: File): CMake = new CMake(origin, settings.copy(moduleOverrides = Some(directory)), closure)
+
+    override def options(closure: PartialFunction[NativeRuntime, Flags]): CMake = new CMake(origin, settings, closure)
+  end CMake
 
   /** Built from a local `directory`, resolved against the project base directory, then the build root. */
   def local(directory: String): Origin = Origin.Local(directory)
@@ -93,23 +122,16 @@ end Vendored
   */
 sealed trait Origin derives CanEqual:
 
-  /** Build with CMake, building `targets` (none builds the default); the library is built static or shared per its
-    * resolved per-library [[Linkage]]. Unsupported on the Windows MinGW toolchain.
+  /** Build with CMake, building `targets` (none builds the project's default), static or shared per the library's
+    * resolved [[Linkage]]. Every library the install writes under its staging prefix is linked, not only those of
+    * `targets`, in the order of their paths under the prefix. Unsupported on the Windows MinGW toolchain.
     */
-  def cmake(targets: String*): Vendored = cmake(targets, PartialFunction.empty)
-
-  /** Build with CMake, building `targets` and adding per-platform configure `flags`. */
-  def cmake(targets: Seq[String], flags: PartialFunction[NativeRuntime, Seq[String]]): Vendored =
-    new Vendored(this, Backend.CMake(flags, targets, None), PartialFunction.empty)
-
-  /** Build with CMake, building `targets`, adding per-platform configure `flags`, and prepending a `moduleOverrides`
-    * directory to `CMAKE_MODULE_PATH`.
-    */
-  def cmake(targets: Seq[String], flags: PartialFunction[NativeRuntime, Seq[String]], moduleOverrides: File): Vendored =
-    new Vendored(this, Backend.CMake(flags, targets, Some(moduleOverrides)), PartialFunction.empty)
+  def cmake(targets: String*): Vendored.CMake =
+    new Vendored.CMake(this, Backend.CMake(targets, PartialFunction.empty, ".", None), PartialFunction.empty)
 
   /** Build with a user-supplied function from [[BuildContext]] to [[Artefacts]], writing outputs under the context's
-    * staging directory and honouring its [[Linkage]] (an archive for `Static`, a shared library for `Dynamic`).
+    * staging directory and honouring its [[Linkage]] (an archive for `Static`, a shared library for `Dynamic`). The
+    * returned libraries link in the order returned, several archives grouped as [[Artefacts]] describes.
     *
     * `token` is the build's cache identity, and it is your responsibility. This function is opaque to snx, so the cache
     * keys on `token` alone - the source content, the toolchain, and the resolved runtime/linkage/mode are tracked for

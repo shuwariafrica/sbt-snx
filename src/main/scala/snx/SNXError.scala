@@ -32,18 +32,23 @@ object SNXError:
   /** A plugin feature the resolved toolchain cannot provide - for example a build backend it cannot drive. */
   final case class UnsupportedToolchain(message: String) extends SNXError(message)
 
-  /** A vendored CMake build that could not run: a missing `CMakeLists.txt`, absent `install` rules, or a failed
-    * `cmake` invocation.
+  /** A vendored CMake build that could not run: a missing `CMakeLists.txt`, absent `install` rules, a failed `cmake`
+    * invocation, or an install that left no `install_manifest.txt` to check.
     */
   final case class CMakeBuildFailed(message: String) extends SNXError(message)
 
   /** A vendored Git source that could not be fetched: a `git` invocation that failed against its repository or ref. */
   final case class FetchFailed(message: String) extends SNXError(message)
 
-  /** A vendored backend output (archive or header directory) that lies outside the build staging directory, so the
-    * build cache cannot capture it.
+  /** A vendored build output outside the build staging directory: an archive or header directory a backend returned,
+    * which the build cache cannot capture, or a file a CMake install wrote into the host.
     */
   final case class OutputOutsideStaging(message: String) extends SNXError(message)
+
+  /** A vendored CMake project directory that is absolute or reaches outside the vendored source, whose content alone
+    * keys the build cache.
+    */
+  final case class DirectoryOutsideSource(message: String) extends SNXError(message)
 
   /** A vendored source directory that changed while the build was reading it to compute its cache identity. */
   final case class SourceChanged(message: String) extends SNXError(message)
