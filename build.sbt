@@ -96,3 +96,5 @@ def scriptedSettings: Seq[Def.Setting[?]] = Seq(
 
 addCommandAlias("format", "scalafixAll; scalafmtAll; scalafmtSbt; headerCreateAll")
 addCommandAlias("check", "scalafixAll --check; scalafmtCheckAll; scalafmtSbtCheck; headerCheckAll")
+// Consumers load the plugin on the latest sbt line as well as the line it builds on, which `scripted` runs.
+addCommandAlias("scriptedLatest", "set scriptedSbt := \"2.1.0\"; scripted")
