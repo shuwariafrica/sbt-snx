@@ -987,9 +987,26 @@ object SNXPlugin extends AutoPlugin:
   private[sbt] def crossStrip(options: Seq[String], prefix: String, cross: Boolean): Seq[String] =
     if cross then options.filterNot(_.startsWith(prefix)) else options
 
-  private def resolveClang(setting: Option[File]): Path = setting.map(_.toPath.nn).getOrElse(Discover.clang())
+  private def resolveClang(setting: Option[File]): Path =
+    setting.map(_.toPath.nn).orElse(visualStudioClang(sys.env, SNX.host, "clang.exe")).getOrElse(Discover.clang())
 
-  private def resolveClangPP(setting: Option[File]): Path = setting.map(_.toPath.nn).getOrElse(Discover.clangpp())
+  private def resolveClangPP(setting: Option[File]): Path =
+    setting.map(_.toPath.nn).orElse(visualStudioClang(sys.env, SNX.host, "clang++.exe")).getOrElse(Discover.clangpp())
+
+  // In a Visual Studio developer environment (VCINSTALLDIR, which vcvarsall sets), the Clang that Visual Studio ships:
+  // its STL accepts only a Clang at least as new as its own, which a standalone LLVM found on PATH can lag. LLVM_BIN, the
+  // explicit choice Scala Native's discovery honours, still wins.
+  private[sbt] def visualStudioClang(env: Map[String, String], host: TargetPlatform, binary: String): Option[Path] =
+    host.os match
+      case OS.Windows if !env.contains("LLVM_BIN") =>
+        val hostDirectory = host.arch match
+          case Arch.X86_64  => "x64"
+          case Arch.Aarch64 => "ARM64"
+        env
+          .get("VCINSTALLDIR")
+          .map(directory => Path.of(directory, "Tools", "Llvm", hostDirectory, "bin", binary).nn)
+          .filter(java.nio.file.Files.isRegularFile(_))
+      case OS.Windows | OS.Linux | OS.Darwin => None
 
   // The ABI is never inferred from absence: where neither the triple nor the compiler names one, that is an error
   // rather than an assumed glibc, since absence cannot distinguish a supported libc from one that is not.
