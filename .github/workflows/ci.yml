@@ -186,9 +186,11 @@ jobs:
           fi
       - name: Verify scripts are executable
         shell: bash
+        # The container runs as root over a checkout the runner's user owns, which git refuses as dubious ownership;
+        # safe.directory given with -c is protected configuration, so it admits this one command and nothing else.
         run: |
           for script in release project/scripts/run-sbt.sh; do
-            mode=$(git ls-files --stage -- "${script}" | cut -d ' ' -f 1)
+            mode=$(git -c safe.directory="${GITHUB_WORKSPACE}" ls-files --stage -- "${script}" | cut -d ' ' -f 1)
             if [[ "${mode}" != 100755 ]]; then
               printf '::error::%s is committed as %s; make it executable with: git update-index --chmod=+x %s\n' "${script}" "${mode:-untracked}" "${script}"
               exit 1
