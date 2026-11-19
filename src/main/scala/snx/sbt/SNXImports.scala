@@ -19,6 +19,7 @@ package snx.sbt
 
 import sbt.Def
 import sbt.Project
+import sbt.ProjectFinder
 import sbt.ProjectMatrix
 import sbt.SettingKey
 import sbt.TaskKey
@@ -116,7 +117,7 @@ object SNXImports:
   given Conversion[Seq[NativeLibrary], PartialFunction[NativeRuntime, Seq[NativeLibrary]]] = libraries => { case _ => libraries }
 
   /** Add a Scala Native row driven by sbt-snx to a project matrix - the counterpart of the matrix's built-in
-    * `nativePlatform`, which enables the official Scala Native plugin.
+    * `nativePlatform`, which enables the official Scala Native plugin. The row is on [[SNXImports.SNX.axis]].
     */
   extension (matrix: ProjectMatrix)
     def snxPlatform(scalaVersions: Seq[String]): ProjectMatrix =
@@ -128,17 +129,26 @@ object SNXImports:
     def snxPlatform(scalaVersions: Seq[String], axisValues: Seq[VirtualAxis], configure: Project => Project): ProjectMatrix =
       snxRow(matrix, scalaVersions, axisValues, configure)
 
+    /** The matrix's sbt-snx rows - the counterpart of the matrix's `native` finder, which finds none of them. */
+    def snxNative: ProjectFinder = matrix.finder(SNX.axis)
+
   private def snxRow(
     matrix: ProjectMatrix,
     scalaVersions: Seq[String],
     axisValues: Seq[VirtualAxis],
     configure: Project => Project): ProjectMatrix =
-    matrix.customRow(scalaVersions, VirtualAxis.native +: axisValues, (project: Project) => configure(project.enablePlugins(SNXPlugin)))
+    matrix.customRow(scalaVersions, SNX.axis +: axisValues, (project: Project) => configure(project.enablePlugins(SNXPlugin)))
 
   /** Settings and tasks of the sbt-snx plugin, namespaced to avoid clashing with sbt or Scala Native keys
     * (for example sbt's own `target`).
     */
   object SNX:
+
+    /** The platform axis of an `snxPlatform` row: a native row's project-id suffix and source directories, under a
+      * value of its own because sbt 2.1 enables the official Scala Native plugin on every `VirtualAxis.native` row.
+      * Select sbt-snx rows by this axis, for example in `defaultAxes` or `configurePlatforms`.
+      */
+    val axis: VirtualAxis.PlatformAxis = VirtualAxis.PlatformAxis("snx", "Native", "native")
 
     /** The build host's [[TargetPlatform]], from the `os.name` and `os.arch` system properties. */
     lazy val host: TargetPlatform =

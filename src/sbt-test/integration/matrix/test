@@ -1,4 +1,4 @@
-# the matrix expands into a JVM row (app) and an sbt-snx native row (appNative)
+# the matrix expands into a JVM row (app) and an sbt-snx native row (appNative), each depending on lib's matching row
 # the JVM row compiles as a plain JVM project (its scalajvm/Platform.scala on the path)
 > app/compile
 # the native row compiles its scalanative/Platform.scala AND links a native binary through sbt-snx (snxLink is an
@@ -6,3 +6,5 @@
 > appNative/Compile/snxLink
 # and the linked native binary runs
 > appNative/run
+# the snxNative finder selects the sbt-snx row by Scala version, as the matrix's own `native` finder does for its rows
+> checkFinder
