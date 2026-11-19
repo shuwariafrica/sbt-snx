@@ -1,0 +1,6 @@
+# A CMake project below the vendored source root (.directory("build/cmake")) configures, builds, and installs. Its three
+# archives link only as the platform's linker takes them: grouped on Linux, ungrouped on macOS and MSVC. The binary
+# runs and verifies the answer through all three; the man page its install() rule writes to a configure-time absolute
+# destination lies under the staging prefix.
+> run
+> assertManStaged

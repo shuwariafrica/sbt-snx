@@ -451,11 +451,20 @@ object SNXPlugin extends AutoPlugin:
     case NativeRuntime.Linux(_, _) | NativeRuntime.Darwin(_) => Seq("-Wl,-rpath," + dir)
     case NativeRuntime.Windows(_, _)                         => Seq.empty
 
-  // The link tokens for a vendored library's built static archives, in its link-mode syntax.
-  private def archiveLink(runtime: NativeRuntime, mode: LinkMode, archives: Seq[File]): Seq[String] =
+  // The link tokens for a vendored library's built static archives, in its link-mode syntax. GNU ld and MinGW's ld
+  // resolve an archive only against references made before it, so a set referring among itself fails in some order -
+  // in every order once it holds a cycle - unless it is grouped. ld64 and link.exe search archives without regard to
+  // order, which the vendored/cmakeproject fixture checks on their CI cells. Whole-archive loads every member, so
+  // order cannot drop one.
+  private[sbt] def archiveLink(runtime: NativeRuntime, mode: LinkMode, archives: Seq[File]): Seq[String] =
     mode match
       case LinkMode.WholeArchive => archives.flatMap(archive => Modifier.wholeArchivePath(runtime, archive.getAbsolutePath.nn))
-      case LinkMode.Plain | LinkMode.Framework => archives.map(_.getAbsolutePath.nn)
+      case LinkMode.Plain | LinkMode.Framework =>
+        val paths = archives.map(_.getAbsolutePath.nn)
+        runtime match
+          case NativeRuntime.Linux(_, _) | NativeRuntime.Windows(_, ABI.MinGw) if paths.sizeIs > 1 =>
+            Seq("-Wl,--start-group") ++ paths ++ Seq("-Wl,--end-group")
+          case NativeRuntime.Linux(_, _) | NativeRuntime.Windows(_, _) | NativeRuntime.Darwin(_) => paths
 
   private def linkageLabel(linkage: Linkage): String = linkage match
     case Linkage.Static  => "static"
@@ -749,6 +758,10 @@ object SNXPlugin extends AutoPlugin:
     cache: BuildWideCacheConfiguration,
     converter: FileConverter,
     log: Logger): (Artefacts, Boolean) =
+    // Refused from the path alone, so a project directory outside the source fails before any fetch or digest.
+    library.backend match
+      case cmake: Backend.CMake  => val _ = Backend.projectDirectory(cmake.directory)
+      case Backend.Command(_, _) => ()
     library.origin match
       case Origin.Local(directory) =>
         val location = resolveDir(directory, projectBase, rootBase)
@@ -784,6 +797,8 @@ object SNXPlugin extends AutoPlugin:
           converter,
           log
         )
+    end match
+  end buildVendored
 
   // Build `backend` for `runtime`, cached per library: `locate` resolves the source on a miss only, and the key
   // combines `sourceId`, toolchainId, and `backend.cacheKey`. Returns the artefacts and whether they were built this
@@ -878,7 +893,7 @@ object SNXPlugin extends AutoPlugin:
       val shallow = scala.util.Try {
         git(None, "init", "--bare", "-q", repository.getAbsolutePath)
         git(None, "--git-dir", repository.getAbsolutePath, "remote", "add", "origin", uri)
-        git(None, "--git-dir", repository.getAbsolutePath, "fetch", "--depth", "1", "origin", commit)
+        git(None, "--git-dir", repository.getAbsolutePath, "fetch", "-q", "--depth", "1", "origin", commit)
         checkout("FETCH_HEAD")
       }
       shallow.recover { case scala.util.control.NonFatal(_) =>

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.13)
 project(answer C)
 
-# Enabled only when the plugin's per-platform configure flags pass -DSNX_VIA_FLAG=ON.
+# Enabled only when the library's per-platform `configure` flags pass -DSNX_VIA_FLAG=ON.
 option(SNX_VIA_FLAG "compile-define answer.c with SNX_VIA_FLAG" OFF)
 
 # Plain library (no STATIC): a static archive is produced only because the plugin passes -DBUILD_SHARED_LIBS=OFF.

@@ -1,3 +1,3 @@
 #include "answer.h"
 
-int snx_answer(void) { return 42; }
+int snx_answer(void) { return snx_answer_base(); }
