@@ -20,5 +20,17 @@ check := Def.uncached {
     case NativeRuntime.Windows(_, ABI.Msvc)  => "msvc"
     case NativeRuntime.Windows(_, ABI.MinGw) => "mingw"
   assert(resolved == env, s"resolved toolchain env '$resolved' != ground truth '$env'")
+
+  // An MSVC build compiles with the Clang of the Visual Studio whose STL it uses, which refuses an older Clang. The
+  // resolved configuration is read as `show snxConfig` prints it.
+  val clang = (Compile / SNX.config).value.toString.linesIterator.map(_.trim).collectFirst {
+    case line if line.startsWith("- clang:") => java.nio.file.Path.of(line.stripPrefix("- clang:").trim)
+  }
+  assert(clang.isDefined, "the resolved configuration names no clang")
+  (resolved, sys.env.get("VCINSTALLDIR"), sys.env.get("LLVM_BIN")) match
+    case ("msvc", Some(vc), None) =>
+      assert(clang.exists(_.startsWith(java.nio.file.Path.of(vc))), s"clang ${clang.mkString} is not Visual Studio's, under $vc")
+      streams.value.log.info(s"snx platform/detect: clang ${clang.mkString} is Visual Studio's")
+    case _ => streams.value.log.info(s"snx platform/detect: clang ${clang.mkString}")
   streams.value.log.info(s"snx platform/detect: $classifier env='$env' resolved correctly")
 }
