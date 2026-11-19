@@ -138,6 +138,14 @@ jobs:
           C:\msys64\usr\bin\pacman -U --noconfirm https://repo.msys2.org/mingw/clang64/mingw-w64-clang-x86_64-headers-14.0.0.r283.ga7cb47123-1-any.pkg.tar.zst
           "LLVM_BIN=C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      # What a Scala Native binary's start-up depends on in this host and its container, printed before any test runs so
+      # a run that fails on one host can be read against one that passes on another. A report, so its own failure is
+      # annotated on the run and does not stop the tests.
+      - name: "[${{ matrix.triple }}] Host facts"
+        if: ${{ matrix.os == 'linux' }}
+        continue-on-error: true
+        shell: bash
+        run: ./project/scripts/host-facts.sh
       - name: "[${{ matrix.triple }}] Unit tests"
         shell: bash
         # `testOnly *` rather than `test`: under sbt 2.x `test` resolves through `testQuick`, which skips any suite
@@ -199,7 +207,7 @@ jobs:
         # The container runs as root over a checkout the runner's user owns, which git refuses as dubious ownership;
         # safe.directory given with -c is protected configuration, so it admits this one command and nothing else.
         run: |
-          for script in release project/scripts/run-sbt.sh; do
+          for script in release project/scripts/run-sbt.sh project/scripts/host-facts.sh; do
             mode=$(git -c safe.directory="${GITHUB_WORKSPACE}" ls-files --stage -- "${script}" | cut -d ' ' -f 1)
             if [[ "${mode}" != 100755 ]]; then
               printf '::error::%s is committed as %s; make it executable with: git update-index --chmod=+x %s\n' "${script}" "${mode:-untracked}" "${script}"
@@ -207,9 +215,10 @@ jobs:
             fi
           done
 
-  # The repository's own shell: the workflows' run blocks, release and run-sbt.sh. actionlint calls ShellCheck with
-  # --norc, so the .shellcheckrc baseline reaches the run blocks only through SHELLCHECK_OPTS. The actionlint image has
-  # no git, so actionlint is named its configuration, and the image's own user cannot write the runner's work directory.
+  # The repository's own shell: the workflows' run blocks, release, run-sbt.sh and host-facts.sh. actionlint calls
+  # ShellCheck with --norc, so the .shellcheckrc baseline reaches the run blocks only through SHELLCHECK_OPTS. The
+  # actionlint image has no git, so actionlint is named its configuration, and the image's own user cannot write the
+  # runner's work directory.
   lint:
     name: lint / workflows and scripts
     runs-on: ubuntu-26.04
@@ -227,7 +236,7 @@ jobs:
           SHELLCHECK_OPTS: --enable=all
         run: actionlint -config-file .github/actionlint.yaml .github/workflows/*.yml
       - name: Lint scripts
-        run: shellcheck release project/scripts/run-sbt.sh
+        run: shellcheck release project/scripts/run-sbt.sh project/scripts/host-facts.sh
 
   format:
     name: format / scripts
@@ -240,7 +249,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Check script formatting
-        run: shfmt -d release project/scripts/run-sbt.sh
+        run: shfmt -d release project/scripts/run-sbt.sh project/scripts/host-facts.sh
 
   publish:
     name: publish
