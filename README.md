@@ -115,9 +115,10 @@ build are cached separately). LTO does not extend into a vendored build (it is a
 through the backend's own `cmake(targets, flags)` if you need it there.
 
 `SNX.includeDirs` and `SNX.libDirs` add `-I`/`-L` directories - host-discovered paths are dropped when cross-targeting,
-so a cross build is not contaminated by the host toolchain's directories - and `SNX.clang`/`SNX.clangPP` override the
-discovered compilers. `.c`, `.cpp`, and `.S` sources under `src/main/resources/scala-native/` are compiled into the
-binary at link time.
+so a cross build is not contaminated by the host toolchain's directories - and `SNX.clang`/`SNX.clangPP` set the
+compilers. Unset, they come from `LLVM_BIN`; otherwise, in a Visual Studio developer environment on Windows (after
+`vcvarsall`), from that Visual Studio's own Clang, since its MSVC STL refuses an older Clang; otherwise from `PATH`.
+`.c`, `.cpp`, and `.S` sources under `src/main/resources/scala-native/` are compiled into the binary at link time.
 
 ## Native dependencies
 

@@ -110,12 +110,17 @@ jobs:
         if: ${{ matrix.os == 'windows' && matrix.env == 'msvc' }}
         shell: pwsh
         run: |
+          $PSNativeCommandUseErrorActionPreference = $true
           $arch = if ('${{ matrix.arch }}' -eq 'aarch64') { 'arm64' } else { 'amd64' }
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
                   -latest -property installationPath
           cmd /c "`"$vs\VC\Auxiliary\Build\vcvarsall.bat`" $arch && set" |
             ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') { "$($Matches[1])=$($Matches[2])" } } |
             Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # sbt-snx compiles with the Clang this environment's Visual Studio ships (found through VCINSTALLDIR), whose
+          # STL accepts no older Clang; record which one it is.
+          $llvm = Join-Path $vs "VC\Tools\Llvm\$(if ($arch -eq 'arm64') { 'ARM64' } else { 'x64' })\bin\clang.exe"
+          if (Test-Path $llvm) { (& $llvm --version)[0] } else { Write-Warning "Visual Studio's Clang is not at $llvm" }
       - name: "[Windows] Set up MinGW (clang64)"
         if: ${{ matrix.os == 'windows' && matrix.env == 'mingw' }}
         shell: pwsh
