@@ -838,19 +838,29 @@ class RecipeSuite extends munit.FunSuite:
     finally
       val _ = parent.setWritable(true)
 
+  // A read-only file binds on every platform. A read-only directory does not on Windows, whose `File.setWritable`
+  // leaves a directory's attributes alone and whose write check ignores them, nor for a run as root; there only the
+  // file is checked.
   test("removing a clone deletes a link it holds, never what the link points to"):
     val outside = mkdirs(root / "removal" / "outside")
     val kept = written(outside / "kept.txt", "the developer's own file")
     val clone = mkdirs(root / "removal" / "linking-clone")
     val _ = linked(clone / "out", outside)
+    val _ = linked(clone / "kept-link", kept)
+    val _ = kept.setWritable(false)
     val _ = outside.setWritable(false)
+    val fileBinds = !Files.isWritable(kept.toPath)
+    val directoryBinds = !Files.isWritable(outside.toPath)
     try
       val _ = SNXPlugin.materialise(clone)(())
       assert(!(clone / "out").exists && !Files.isSymbolicLink((clone / "out").toPath), "the link itself is deleted")
+      assert(!Files.isSymbolicLink((clone / "kept-link").toPath), "the file link itself is deleted")
       assert(kept.isFile, s"$kept, outside the clone, is kept")
-      assert(!Files.isWritable(outside.toPath), s"$outside is not made writable through the link")
+      if fileBinds then assert(!Files.isWritable(kept.toPath), s"$kept is not made writable through the link")
+      if directoryBinds then assert(!Files.isWritable(outside.toPath), s"$outside is not made writable through the link")
     finally
       val _ = outside.setWritable(true)
+      val _ = kept.setWritable(true)
 
   test("an error named for its library is not named again"):
     val once = SNXError.forLibrary("lib", SNXError.DeleteFailed("snx: could not delete '/x'"))
