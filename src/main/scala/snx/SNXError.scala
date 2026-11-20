@@ -71,6 +71,11 @@ object SNXError:
   /** A vendored Git source that could not be fetched: a `git` invocation that failed against its repository or ref. */
   final case class FetchFailed(message: String) extends SNXError(message)
 
+  /** A vendored directory the plugin must replace - an incomplete Git clone, a library's build staging - that could not
+    * be deleted.
+    */
+  final case class DeleteFailed(message: String) extends SNXError(message)
+
   /** A vendored build output outside the build staging directory: an archive or header directory a backend returned,
     * which the build cache cannot capture, or a file a CMake install wrote into the host.
     */
@@ -126,7 +131,10 @@ object SNXError:
   // `error` naming the vendored library it arose in, for a backend whose own messages do not: its message, after the
   // `snx: ` that begins it, opens with the library.
   private[snx] def forLibrary(library: String, error: SNXError): SNXError =
-    def named(message: String): String = s"snx: vendored library '$library': ${message.stripPrefix("snx: ")}"
+    // A message already naming this library is left as it is, so an error named where it arose is not named twice.
+    def named(message: String): String =
+      val prefix = s"snx: vendored library '$library': "
+      if message.startsWith(prefix) then message else s"$prefix${message.stripPrefix("snx: ")}"
     error match
       case UnsupportedTarget(message)        => UnsupportedTarget(named(message))
       case UnsupportedToolchain(message)     => UnsupportedToolchain(named(message))
@@ -138,6 +146,7 @@ object SNXError:
       case InputUnreadable(message)          => InputUnreadable(named(message))
       case InputHoldsStaging(message)        => InputHoldsStaging(named(message))
       case FetchFailed(message)              => FetchFailed(named(message))
+      case DeleteFailed(message)             => DeleteFailed(named(message))
       case OutputOutsideStaging(message)     => OutputOutsideStaging(named(message))
       case DirectoryOutsideSource(message)   => DirectoryOutsideSource(named(message))
       case SourceChanged(message)            => SourceChanged(named(message))

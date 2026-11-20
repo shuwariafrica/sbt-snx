@@ -132,7 +132,7 @@ expectBuilt := Def.uncached {
 val expectCached = taskKey[Unit]("assert the library was served from the cache")
 expectCached := Def.uncached {
   val config = (Compile / SNX.config).value.toString
-  val archive = "[^\\s,()]+(?:libanswer\\.a|answer\\.lib)".r.findFirstIn(config).map(file).getOrElse(sys.error(s"no answer archive in $config"))
+  val archive = "[^\\s,()\\[\\]]+(?:libanswer\\.a|answer\\.lib)".r.findFirstIn(config).map(file).getOrElse(sys.error(s"no answer archive in $config"))
   assert(archive.isFile && !(archive.getParentFile / "answer.o").exists, s"expected a cache hit: no build to have compiled answer.o beside $archive")
 }
 

@@ -92,7 +92,7 @@ expectBuilt := Def.uncached {
 val expectCached = taskKey[Unit]("assert the library was served from the cache")
 expectCached := Def.uncached {
   val config = (Compile / SNX.config).value.toString
-  val archive = "[^\\s,()]+(?:libanswer\\.a|answer\\.lib)".r.findFirstIn(config).map(file).getOrElse(sys.error(s"no answer archive in $config"))
+  val archive = "[^\\s,()\\[\\]]+(?:libanswer\\.a|answer\\.lib)".r.findFirstIn(config).map(file).getOrElse(sys.error(s"no answer archive in $config"))
   assert(archive.isFile && !(archive.getParentFile / "answer.o").exists, s"expected a cache hit: no build to have compiled answer.o beside $archive")
 }
 
@@ -102,10 +102,13 @@ expectNoStepRan := Def.uncached {
   assert(ran.isEmpty, s"a step ran before the refusal: $ran")
 }
 
-val expectClones = inputKey[Unit]("assert the Git clones are present or absent")
+// A complete clone is one holding its completion marker - what the plugin decides by. On Windows a delete can leave a
+// clone's read-only git objects behind, so a directory alone says nothing.
+val expectClones = inputKey[Unit]("assert a complete Git clone is present or absent")
 expectClones := Def.uncached {
   val present = complete.DefaultParsers.spaceDelimited("<present|absent>").parsed.head == "present"
-  assert((vendored(target.value) / "clones").exists == present, s"expected the clones ${if (present) "present" else "absent"}")
+  val markers = (vendored(target.value) / "clones" * "*" / ".snx-complete").get().nonEmpty
+  assert(markers == present, s"expected a complete clone ${if (present) "present" else "absent"}")
 }
 
 // lock <path>: make a file or directory unreadable where the host's permissions bind, recording that they did; on a

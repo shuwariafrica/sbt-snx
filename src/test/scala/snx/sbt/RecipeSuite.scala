@@ -821,4 +821,74 @@ class RecipeSuite extends munit.FunSuite:
     val error = intercept[SNXError.OutputOutsideStaging](
       Backend.execute(Recipe(step("exit", "0").in(stagedRoot / "tgt")), at, stagedVendoring, new Lines))
     assert(clue(error.getMessage).contains("vendored library 'lib'"))
+
+  test("a clone directory without its completion marker is removed and built again"):
+    val clone = mkdirs(root / "clones" / "partial")
+    val leftover = written(clone / "git" / "objects" / "pack" / "pack-1.pack", "left by an incomplete delete")
+    val _ = leftover.setWritable(false)
+    val built = new java.util.concurrent.atomic.AtomicInteger
+    val _ = SNXPlugin.materialise(clone) { val _ = built.incrementAndGet() }
+    assertEquals(built.get, 1)
+    assert(!leftover.exists, s"the read-only leftover $leftover is removed")
+    assert((clone / SNXPlugin.completionMarker).isFile)
+
+  test("a clone directory with its completion marker is kept"):
+    val clone = mkdirs(root / "clones" / "complete")
+    val kept = written(clone / "source" / "answer.c", "int answer(void);")
+    val _ = written(clone / SNXPlugin.completionMarker, "")
+    val built = new java.util.concurrent.atomic.AtomicInteger
+    val _ = SNXPlugin.materialise(clone) { val _ = built.incrementAndGet() }
+    val _ = SNXPlugin.materialise(clone) { val _ = built.incrementAndGet() }
+    assertEquals(built.get, 0)
+    assert(kept.isFile)
+
+  test("a clone whose build fails leaves no completion marker, so the next build fetches it again"):
+    val clone = root / "clones" / "failed"
+    val error = intercept[IllegalStateException](SNXPlugin.materialise(clone) {
+      val _ = written(clone / "git" / "HEAD", "ref: refs/heads/main")
+      throw new IllegalStateException("fetch failed") // scalafix:ok DisableSyntax.throw
+    })
+    assertEquals(error.getMessage, "fetch failed")
+    assert(!(clone / SNXPlugin.completionMarker).exists)
+    val built = new java.util.concurrent.atomic.AtomicInteger
+    val _ = SNXPlugin.materialise(clone) { val _ = built.incrementAndGet() }
+    assertEquals(built.get, 1)
+
+  test("removing a directory that is not writable deletes what it holds"):
+    val locked = mkdirs(root / "removal" / "locked")
+    val held = written(locked / "inner.txt", "held")
+    val _ = locked.setWritable(false)
+    SNXPlugin.remove(locked)
+    assert(!locked.exists, s"$locked is removed, $held with it")
+
+  test("a clone that cannot be deleted fails the build with DeleteFailed naming it"):
+    val parent = mkdirs(root / "removal" / "unwritable-parent")
+    val clone = mkdirs(parent / "clone")
+    val _ = written(clone / "git" / "HEAD", "ref: refs/heads/main")
+    val _ = parent.setWritable(false)
+    try
+      assume(!Files.isWritable(parent.toPath), s"permissions do not stop this process writing $parent")
+      val error = intercept[SNXError.DeleteFailed](SNXPlugin.materialise(clone)(()))
+      assert(clue(error.getMessage).contains(clone.getAbsolutePath))
+      assert(clone.exists)
+    finally
+      val _ = parent.setWritable(true)
+
+  test("removing a clone deletes a link it holds, never what the link points to"):
+    val outside = mkdirs(root / "removal" / "outside")
+    val kept = written(outside / "kept.txt", "the developer's own file")
+    val clone = mkdirs(root / "removal" / "linking-clone")
+    val _ = linked(clone / "out", outside)
+    val _ = outside.setWritable(false)
+    try
+      val _ = SNXPlugin.materialise(clone)(())
+      assert(!(clone / "out").exists && !Files.isSymbolicLink((clone / "out").toPath), "the link itself is deleted")
+      assert(kept.isFile, s"$kept, outside the clone, is kept")
+      assert(!Files.isWritable(outside.toPath), s"$outside is not made writable through the link")
+    finally
+      val _ = outside.setWritable(true)
+
+  test("an error named for its library is not named again"):
+    val once = SNXError.forLibrary("lib", SNXError.DeleteFailed("snx: could not delete '/x'"))
+    assertEquals(SNXError.forLibrary("lib", once).getMessage, "snx: vendored library 'lib': could not delete '/x'")
 end RecipeSuite

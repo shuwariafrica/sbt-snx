@@ -19,7 +19,7 @@ expectBuilt := Def.uncached {
 
 // The answer archive a resolved configuration links, read from its rendering.
 def linkedArchive(config: String): File =
-  "[^\\s,()]+(?:libanswer\\.a|answer\\.lib)".r.findFirstIn(config).map(file).getOrElse(sys.error(s"no answer archive in $config"))
+  "[^\\s,()\\[\\]]+(?:libanswer\\.a|answer\\.lib)".r.findFirstIn(config).map(file).getOrElse(sys.error(s"no answer archive in $config"))
 
 // A hit: the archive linked is present, and its staging holds no object compiled this run.
 def cached(config: String): Unit = {

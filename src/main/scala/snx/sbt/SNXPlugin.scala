@@ -772,56 +772,60 @@ object SNXPlugin extends AutoPlugin:
           val _ = Backend.projectDirectory(cmake.directory)
         catch case error: SNXError => fail(SNXError.forLibrary(named, error))
       case Backend.Command(_) => ()
-    library.origin match
-      case Origin.Local(directory) =>
-        val location = resolveDir(directory, projectBase, rootBase)
-        val name = slug(directory)
-        cachedBuild(
-          name,
-          library.backend,
-          runtime,
-          linkage,
-          mode,
-          clang,
-          clangPP,
-          Vendored.contentDigest(location),
-          location,
-          location,
-          () => (),
-          vendoring(name),
-          staging,
-          cache,
-          converter,
-          log
-        )
-      case Origin.Git(uri, ref) =>
-        val clones = new File(staging, "clones")
-        val commit = resolveGitCommit(uri, ref, log)
-        val name = s"git-${Hash.trimHashString(s"$uri@$commit", 8)}"
-        // The source, fetched on a miss only.
-        def fetched(): Unit =
-          val _ = fetch(uri, commit, clones, log)
-        cachedBuild(
-          name,
-          library.backend,
-          runtime,
-          linkage,
-          mode,
-          clang,
-          clangPP,
-          s"git:$uri@$commit",
-          worktree(uri, commit, clones),
-          // Outside the clone: a recipe that reads it can create it (sbt's IO.read makes a file's parent), and the clone's
-          // presence is what tells `fetch` the source is already fetched.
-          new File(staging, s"$name.unfetched"),
-          () => fetched(),
-          vendoring(name),
-          staging,
-          cache,
-          converter,
-          log
-        )
-    end match
+    // Every typed failure of the build names its library: a fetch, a staging cleared, the backend.
+    try
+      library.origin match
+        case Origin.Local(directory) =>
+          val location = resolveDir(directory, projectBase, rootBase)
+          val name = slug(directory)
+          cachedBuild(
+            name,
+            library.backend,
+            runtime,
+            linkage,
+            mode,
+            clang,
+            clangPP,
+            Vendored.contentDigest(location),
+            location,
+            location,
+            () => (),
+            vendoring(name),
+            staging,
+            cache,
+            converter,
+            log
+          )
+        case Origin.Git(uri, ref) =>
+          val clones = new File(staging, "clones")
+          val commit = resolveGitCommit(uri, ref, log)
+          val name = s"git-${Hash.trimHashString(s"$uri@$commit", 8)}"
+          // The source, fetched on a miss only.
+          def fetched(): Unit =
+            val _ = fetch(uri, commit, clones, log)
+          cachedBuild(
+            name,
+            library.backend,
+            runtime,
+            linkage,
+            mode,
+            clang,
+            clangPP,
+            s"git:$uri@$commit",
+            worktree(uri, commit, clones),
+            // Outside the clone: a recipe that reads it can create it (sbt's IO.read makes a file's parent), and only the
+            // clone's completion marker may tell `fetch` the source is already fetched.
+            new File(staging, s"$name.unfetched"),
+            () => fetched(),
+            vendoring(name),
+            staging,
+            cache,
+            converter,
+            log
+          )
+      end match
+    catch case error: SNXError => fail(SNXError.forLibrary(named, error))
+    end try
   end buildVendored
 
   // Build `backend` for `runtime`, cached per library: `locate` resolves the source on a miss only, and the key
@@ -870,7 +874,7 @@ object SNXPlugin extends AutoPlugin:
       ) { _ =>
         built.set(true)
         locate()
-        IO.delete(sourceStaging)
+        remove(sourceStaging)
         // The key was computed before the source was fetched and the staging cleared; a backend key that differs now
         // read one of them, so the key does not describe this build and caching under it would serve the wrong archive.
         if backend.cacheKey(context, vendoring) != backendKey then
@@ -922,7 +926,7 @@ object SNXPlugin extends AutoPlugin:
     val inProject = new File(projectBase, directory)
     if inProject.isDirectory then inProject else new File(rootBase, directory)
 
-  // Stage the worktree of `uri` at `commit` under `clones`, reusing an existing staging. Only the pinned commit is
+  // Stage the worktree of `uri` at `commit` under `clones`, reusing a completed staging (`materialise`). Only the pinned commit is
   // fetched (`--depth 1` - the referenced tree, not the whole history), falling back to a full clone when a remote
   // rejects fetching a bare commit. The repository is kept in a sibling directory of the worktree rather than inside
   // it, so a backend is handed checked-out sources alone: git's automatic maintenance detaches and goes on rewriting
@@ -959,7 +963,8 @@ object SNXPlugin extends AutoPlugin:
       }
       shallow.recover { case scala.util.control.NonFatal(_) =>
         log.debug(s"snx vendored git: shallow fetch of '$commit' from '$uri' failed; falling back to a full clone")
-        IO.delete(Seq(repository, worktree))
+        remove(repository)
+        remove(worktree)
         git(None, "clone", "--bare", "-q", uri, repository.getAbsolutePath)
         checkout(commit)
       }.get
@@ -973,13 +978,53 @@ object SNXPlugin extends AutoPlugin:
     val command = Seq("git", "-c", "gc.auto=0", "-c", "maintenance.auto=false") ++ arguments
     if Process(command, cwd).! != 0 then fail(SNXError.FetchFailed(s"snx: ${command.mkString(" ")} failed"))
 
-  // Create `directory` with `build` unless it already exists, leaving no partial directory behind when `build` fails.
-  private def materialise(directory: File)(build: => Unit): File =
-    if !directory.exists then
+  // Create `directory` with `build` unless a completed one is there. Completion is the marker written after `build`
+  // returns, never the directory's existence: a fetch that failed or was interrupted, or a delete that could not
+  // finish, leaves a directory without it - sbt's `IO.delete`, which `clean` uses, gives up silently on the read-only
+  // object files git writes on Windows - and that directory is removed and built again rather than taken as fetched.
+  private[sbt] def materialise(directory: File)(build: => Unit): File =
+    val marker = new File(directory, completionMarker)
+    if !marker.isFile then
+      if directory.exists then remove(directory)
       val attempt = scala.util.Try(build)
-      if attempt.isFailure then IO.delete(directory)
-      attempt.get
+      attempt match
+        case scala.util.Success(_)     => IO.touch(marker)
+        case scala.util.Failure(cause) =>
+          // The marker is absent either way, so a removal that fails here is retried by the next build.
+          val _ = scala.util.Try(remove(directory))
+          throw cause // scalafix:ok DisableSyntax.throw
     directory
+
+  private[sbt] val completionMarker = ".snx-complete"
+
+  // Delete `file` and everything under it. Attributes are read without following links, and only a plain file or
+  // directory is made writable or descended into: a symbolic link, a Windows junction or any other reparse point
+  // (`isOther`) is deleted itself, so nothing it points to is changed or deleted. Making an entry writable lets Windows
+  // delete git's read-only objects; it does not change a Windows directory, whose deletion needs no write access to
+  // the directory itself. An entry that cannot be read or deleted fails the build by name.
+  private[sbt] def remove(file: File): Unit =
+    val path = file.toPath.nn
+    def unremovable(cause: java.io.IOException): Nothing =
+      fail(
+        SNXError.DeleteFailed(s"snx: could not delete '${file.getAbsolutePath}' ($cause) while replacing a vendored directory; delete it " +
+          "and build again"))
+    val attributes =
+      try
+        Some(
+          java.nio.file.Files
+            .readAttributes(path, classOf[java.nio.file.attribute.BasicFileAttributes], java.nio.file.LinkOption.NOFOLLOW_LINKS)
+            .nn)
+      catch
+        case _: java.nio.file.NoSuchFileException => None
+        case cause: java.io.IOException           => unremovable(cause)
+    attributes.foreach: found =>
+      val plain = !found.isSymbolicLink && !found.isOther
+      if plain then
+        val _ = file.setWritable(true)
+      if plain && found.isDirectory then Option(file.listFiles).toSeq.flatten.foreach(remove)
+      try
+        val _ = java.nio.file.Files.deleteIfExists(path)
+      catch case cause: java.io.IOException => unremovable(cause)
 
   // Resolve a Git `ref` to the commit it names, so the vendored cache keys on the actual commit rather than a
   // possibly-moving `ref`: a moved branch or force-moved tag then invalidates the archive, and two hosts resolving the
