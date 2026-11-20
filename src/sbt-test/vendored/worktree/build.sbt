@@ -1,55 +1,42 @@
-import scala.sys.process.Process
-
 enablePlugins(SNXPlugin)
 
 scalaVersion := sys.props("scala.version")
 
 SNX.deliverable := Executable
 
-// A vendored Git source built by the Command escape hatch, which is the only backend that sees the staged source
-// directory, so it is the only place the staging contract can be asserted from a build. The backend refuses to build
-// unless the directory it is handed is a plain worktree: a repository staged inside it is rewritten by git's detached
-// automatic maintenance after the fetch returns, so any backend walking the source races files that are enumerated and
-// then deleted. The walk below is that same enumerate-then-open, kept because it is the operation that fails in the
-// field. The repository is cloned offline by setupRepo, and the file URI is built via Path.toUri so it is well-formed
-// on every OS (file:///... including a Windows drive letter).
-SNX.libraries += NativeLibrary(
-  "answer",
-  Vendored.git((target.value / "answer-repo").toPath.toUri.toString, "v1").command("worktree-1") { ctx =>
-    val stray = ctx.source.listFiles.toSeq.filter(_.getName == ".git")
-    assert(stray.isEmpty, s"Origin.Git staged a repository inside the worktree: ${stray.map(_.getAbsolutePath).mkString(", ")}")
-    val walked = (ctx.source ** "*").get().filter(_.isFile)
-    val vanished = walked.filterNot(_.exists)
-    assert(vanished.isEmpty, s"staged sources vanished mid-walk: ${vanished.map(_.getAbsolutePath).mkString(", ")}")
+// A vendored Git source built from a recipe that copies the staged worktree - a walk of every file in it - and
+// compiles the copy. A repository staged inside the worktree is rewritten by git's detached automatic maintenance
+// after the fetch returns, so a walk of it races files enumerated and then deleted; the copy is that walk, kept because
+// it is the operation that fails in the field, and checkWorktree asserts the worktree holds no repository. The
+// repository is made offline by setupRepo; its file URI comes from Path.toUri, well-formed on every OS.
+SNX.libraries += {
+  val repository = (target.value / "answer-repo").toPath.toUri.toString
+  NativeLibrary(
+    "answer",
+    Vendored.git(repository, "v1").command { ctx =>
+      val copied = ctx.staging / "src"
+      val obj = ctx.staging / "answer.o"
+      val library = Toolchain.archive(ctx, "answer")
+      Recipe(
+        Step.copy(ctx.source, copied),
+        Step.run(ctx.clang, "-c", copied / "answer.c", "-I", copied / "include", "-o", obj),
+        Toolchain.archived(ctx, Toolchain.archiver(ctx), library, obj)
+      ).libraries(library).includes(copied / "include")
+    }
+  )
+}
 
-    val clang = ctx.clang
-    val clangDir = clang.getParentFile
-    val exe = if (clang.getName.endsWith(".exe")) ".exe" else ""
-    val obj = ctx.staging / "answer.o"
-    val lib = ctx.staging / "libanswer.a"
-    val include = ctx.staging / "include"
-    IO.createDirectory(ctx.staging)
-    IO.copyDirectory(ctx.source / "include", include)
-    val compiled =
-      Process(
-        Seq(clang.getAbsolutePath, "-c", (ctx.source / "answer.c").getAbsolutePath, "-I", include.getAbsolutePath, "-o", obj.getAbsolutePath)).!
-    assert(compiled == 0, s"answer.c failed to compile (exit $compiled)")
-    val msvc = ctx.runtime match
-      case NativeRuntime.Windows(_, ABI.Msvc) => true
-      case _                                  => false
-    // The archiver is not always beside clang (alpine has /usr/bin/ar but no llvm-ar): try beside clang, then PATH.
-    val names = (if (msvc) Seq("llvm-lib", "lib") else Seq("llvm-ar", "ar")).map(_ + exe)
-    def onPath(name: String): Seq[File] =
-      sys.env.getOrElse("PATH", "").split(java.io.File.pathSeparator).toSeq.map(dir => new File(dir, name))
-    val archiver =
-      (names.map(name => new File(clangDir, name)) ++ names.flatMap(onPath)).find(_.canExecute).getOrElse(sys.error("no archiver found"))
-    val archive =
-      if (msvc) Seq(archiver.getAbsolutePath, "-out:" + lib.getAbsolutePath, obj.getAbsolutePath)
-      else Seq(archiver.getAbsolutePath, "rcs", lib.getAbsolutePath, obj.getAbsolutePath)
-    assert(Process(archive).! == 0, s"libanswer.a failed to build using ${archiver.getName}")
-    Artefacts(Seq(lib), Seq(include))
+// The clone a cold build fetched: its worktree holds the sources at the tag and no repository.
+val checkWorktree = taskKey[Unit]("assert the staged worktree holds the sources and no repository")
+checkWorktree := Def.uncached {
+  val worktrees = (target.value / "snx" / "vendored" / "main" / "clones" * "*" / "source").get()
+  assert(worktrees.nonEmpty, "the cold build staged no worktree")
+  worktrees.foreach { worktree =>
+    assert((worktree / "answer.c").isFile, s"$worktree does not hold the sources")
+    assert(!(worktree / ".git").exists, s"Origin.Git staged a repository inside the worktree $worktree")
   }
-)
+  streams.value.log.info(s"snx vendored/worktree: ${worktrees.mkString} holds the sources and no repository")
+}
 
 // Build a throwaway git repo offline (no network) whose tag v1 carries the answer sources. Signing is forced off so a
 // global signing config needs no key.

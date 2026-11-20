@@ -281,23 +281,39 @@ override); on Windows it uses CMake's default MSVC toolchain, which is ABI-compa
 not supported on Windows MinGW - MSVC is the supported Windows toolchain - so a vendored CMake library there fails the
 build with a clear error rather than producing an unlinkable archive.
 
-For a build CMake does not cover - Make, Autotools, a hand-rolled script - `command(token) { ctx => ... }` is the
-escape hatch: the function builds from `ctx.source` into `ctx.staging` and returns the archives and header directories
-to fold in (an `Artefacts`, whose paths must lie under `ctx.staging` so they are cached). The archives link in the
-order returned, grouped on Linux and MinGW as a CMake build's are. A build system that only builds in place - a
-Makefile, most autotools projects - copies `ctx.source` into `ctx.staging` and builds there, so its outputs land where
-the cache can capture them. `command` allows use of any toolchain - MinGW included.
-
-`token` is the build's cache identity, and keeping it correct is your responsibility. The function is opaque to the
-plugin, so the cache keys on `token` alone - the source content, the toolchain, and the resolved runtime/linkage/mode
-are tracked for you, but a change to the function's own logic is invisible. Change `token` on every change to the build
-- a flag, a target, the recipe - or a warm cache (a persisted CI store, a local rebuild) silently reuses the previous
-archive and a green build links a stale one. Derive it from the build's inputs so editing them updates it:
+For a build CMake does not cover - Make, Autotools, a hand-rolled compile - `command { ctx => Recipe(...) }` builds
+from a recipe: the function returns the steps to run and the libraries they leave, and the plugin runs them, on any
+toolchain, MinGW included. A build system that builds in place copies the source into the staging directory first:
 
 ```scala
-val cflags = Seq("-fms-runtime-lib=static")
-Vendored.local("vendor/mylib").command(s"mylib-${cflags.mkString("_")}") { ctx => /* build using cflags */ }
+Vendored.git(repository, commit).command { ctx =>
+  val build = ctx.staging / "build"
+  Recipe(
+    Step.copy(ctx.source, build),
+    Step.run("make", "-C", build, "libargon2.a", s"CC=${ctx.clang.getAbsolutePath}", arg"-j${ctx.jobs}")
+  ).libraries(build / "libargon2.a").includes(build / "include")
+}
 ```
+
+The cache keys on the recipe, not on the function, so a change to any step, argument, environment value or output
+rebuilds the library, wherever the code that computes it lives. A step runs the program it names, found on the `PATH`
+its own `env` sets over the inherited one; that file's content is keyed. Run directories, copy destinations and
+outputs lie under `ctx.staging`, or the build fails before any step runs. The libraries link in the order named,
+grouped on Linux and MinGW as a CMake build's are; a `Matching(dir, "**/*.o")` names the files a build left by pattern.
+
+A path written in text - a `String` argument, a `String` part of `arg"..."`, a `String` environment value - is keyed as
+text, as written (with the source, staging and compiler paths in it keyed as placeholders, so the main and test builds
+share one archive), and what it names is not read. Pass a file or directory whose content the build depends on as a
+`File`, an `arg"..."` part or a `Matching` - `arg"-include$header"`, not `s"-include$header"` - and it is keyed by its
+content, wherever it is. A directory is keyed by the files beneath it, leaving out hidden directories and sbt's `target`
+beneath it, as a `Matching` over the project does; passing `target` itself, which holds the library's own staging, fails
+with `InputHoldsStaging`, so pass the directory beneath it the build reads. Every file passed is hashed on every build;
+only a step's program, outside the build, is hashed again only when its size, modification time or (Linux, macOS) change
+time moves. What a file refers to inside its content (a response file's flags, a header's `#include`s, a Makefile's
+`include`s) is not followed; pass those files too. `ctx.jobs` runs as the host's processor count and keys alike on every
+host; write it with `arg"..."`, since `s"..."` around it fails the build. The recipe is computed on every build before a
+Git source is fetched, so it names the files it uses rather than listing or reading the source; one that does fails with
+`RecipeChanged` or `RecipeFailed`. Each failure names its library.
 
 ### Caching vendored builds in CI
 
@@ -307,8 +323,7 @@ unless you persist the sbt local cache store (the `SBT_LOCAL_CACHE` directory, f
 Doing so turns an expensive source build - an aws-lc or similar - from minutes per matrix cell into seconds, and it is
 safe: the cache key includes the resolved toolchain (the compilers and their versions, `cmake`, and the ambient
 `CFLAGS`/`CXXFLAGS`/`CPPFLAGS`), so a runner-image or compiler change misses and rebuilds rather than reusing a stale
-archive. For a `command` build the toolchain is tracked the same way, but the build logic is keyed only by its `token`
-(above) - so a persisted cache is only as correct as your token hygiene.
+archive. A `command` build's toolchain is tracked the same way, and its recipe is keyed as above.
 
 ## Publishing
 

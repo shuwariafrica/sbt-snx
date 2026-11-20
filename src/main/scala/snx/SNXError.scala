@@ -37,8 +37,45 @@ object SNXError:
     */
   final case class CMakeBuildFailed(message: String) extends SNXError(message)
 
+  /** A vendored `command` build that could not run: a step that exited non-zero, a program not found or not startable,
+    * a copy that failed, or an output the recipe names that its steps did not write.
+    */
+  final case class CommandBuildFailed(message: String) extends SNXError(message)
+
+  /** A `command` recipe that came out differently once its source was fetched or its staging cleared: it read one of
+    * them while it was computed, so the cache key computed before the fetch does not describe the build.
+    */
+  final case class RecipeChanged(message: String) extends SNXError(message)
+
+  /** A `command` recipe whose function threw while it was computed - before the source is fetched, where reading the
+    * source is the likeliest cause.
+    */
+  final case class RecipeFailed(message: String) extends SNXError(message)
+
+  /** A `command` recipe's text holding an [[snx.sbt.Argument Argument]] interpolated into a `String` (`s"-j${...}"`),
+    * which would reach the program as no value of its own; such a token is written with `arg"..."`.
+    */
+  final case class ArgumentInText(message: String) extends SNXError(message)
+
+  /** A file or directory a `command` recipe names that could not be read to key it - an unreadable file it names, or an
+    * unreadable directory beneath one it names or a `Matching` walks - so the build cannot know what it would read.
+    */
+  final case class InputUnreadable(message: String) extends SNXError(message)
+
+  /** A directory a `command` recipe passes - as a `File` (an argument, an environment value or a copy's source), an
+    * `arg` part or a `Matching`, as written or through a link - that holds the library's own staging inside sbt's
+    * `target` - the target itself, or a directory in it above the staging - whose content is what the build writes, so
+    * it cannot key the build; the recipe passes the directory beneath it that the build reads.
+    */
+  final case class InputHoldsStaging(message: String) extends SNXError(message)
+
   /** A vendored Git source that could not be fetched: a `git` invocation that failed against its repository or ref. */
   final case class FetchFailed(message: String) extends SNXError(message)
+
+  /** A vendored directory the plugin must replace - an incomplete Git clone, a library's build staging - that could not
+    * be deleted.
+    */
+  final case class DeleteFailed(message: String) extends SNXError(message)
 
   /** A vendored build output outside the build staging directory: an archive or header directory a backend returned,
     * which the build cache cannot capture, or a file a CMake install wrote into the host.
@@ -91,4 +128,41 @@ object SNXError:
 
   /** `Test / fork` set on a Scala Native project - a native test binary must run in-process. */
   final case class TestForkUnsupported(message: String) extends SNXError(message)
+
+  // `error` naming the vendored library it arose in, for a backend whose own messages do not: its message, after the
+  // `snx: ` that begins it, opens with the library.
+  private[snx] def forLibrary(library: String, error: SNXError): SNXError =
+    // A message already naming this library is left as it is, so an error named where it arose is not named twice.
+    def named(message: String): String =
+      val prefix = s"snx: vendored library '$library': "
+      if message.startsWith(prefix) then message else s"$prefix${message.stripPrefix("snx: ")}"
+    error match
+      case UnsupportedTarget(message)        => UnsupportedTarget(named(message))
+      case UnsupportedToolchain(message)     => UnsupportedToolchain(named(message))
+      case CMakeBuildFailed(message)         => CMakeBuildFailed(named(message))
+      case CommandBuildFailed(message)       => CommandBuildFailed(named(message))
+      case RecipeChanged(message)            => RecipeChanged(named(message))
+      case RecipeFailed(message)             => RecipeFailed(named(message))
+      case ArgumentInText(message)           => ArgumentInText(named(message))
+      case InputUnreadable(message)          => InputUnreadable(named(message))
+      case InputHoldsStaging(message)        => InputHoldsStaging(named(message))
+      case FetchFailed(message)              => FetchFailed(named(message))
+      case DeleteFailed(message)             => DeleteFailed(named(message))
+      case OutputOutsideStaging(message)     => OutputOutsideStaging(named(message))
+      case DirectoryOutsideSource(message)   => DirectoryOutsideSource(named(message))
+      case SourceChanged(message)            => SourceChanged(named(message))
+      case StaticLinkingUnsupported(message) => StaticLinkingUnsupported(named(message))
+      case UnsupportedLinkage(message)       => UnsupportedLinkage(named(message))
+      case UnprovisionedLibrary(message)     => UnprovisionedLibrary(named(message))
+      case UnmatchedLibrary(message)         => UnmatchedLibrary(named(message))
+      case TargetMismatch(message)           => TargetMismatch(named(message))
+      case UnresolvedLibrary(message)        => UnresolvedLibrary(named(message))
+      case MissingMainClass(message)         => MissingMainClass(named(message))
+      case NotLinkable(message)              => NotLinkable(named(message))
+      case MultithreadingRequired(message)   => MultithreadingRequired(named(message))
+      case RunFailed(message)                => RunFailed(named(message))
+      case RunMainUnsupported(message)       => RunMainUnsupported(named(message))
+      case TestForkUnsupported(message)      => TestForkUnsupported(named(message))
+    end match
+  end forLibrary
 end SNXError
