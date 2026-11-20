@@ -35,20 +35,29 @@ int main(void) {
 }'
 
 host_facts() {
-  local release config cpu flags feature
+  local release config machine cpu flags feature
+  local -a features
   release=$(uname -r)
-  printf 'host: kernel %s\n' "${release}"
+  machine=$(uname -m)
+  printf 'host: kernel %s (%s)\n' "${release}" "${machine}"
   printf 'host: cmdline %s\n' "$(</proc/cmdline)"
   config="/boot/config-${release}"
   if [[ -r "${config}" ]]; then
-    grep -E '^(# )?CONFIG_(DYNAMIC_SIGFRAME|STRICT_SIGALTSTACK_SIZE)[ =]' "${config}" | sed 's/^/host: /' || true # neither line: a kernel older than both options
+    grep -E '^(# )?CONFIG_(DYNAMIC_SIGFRAME|STRICT_SIGALTSTACK_SIZE|ARM64_SVE|ARM64_SME)[ =]' "${config}" | sed 's/^/host: /' || true # none: an architecture or kernel without these options
   else
     printf 'host: %s is not readable\n' "${config}"
   fi
-  cpu=$(grep -m 1 '^model name' /proc/cpuinfo | cut -d ':' -f 2-)
+  # x86 names its model and lists `flags`; arm64 names an implementer and part and lists `Features`. The features are
+  # what grows the signal frame on each: AVX-512 and the AMX tiles behind XFD, or SVE and SME.
+  case "${machine}" in
+    x86_64) features=(avx512f amx_tile amx_int8 amx_bf16 xfd) ;;
+    aarch64 | arm64) features=(sve sve2 sme) ;;
+    *) features=() ;;
+  esac
+  cpu=$(grep -E '^(model name|CPU implementer|CPU part)' /proc/cpuinfo | sort -u | cut -d ':' -f 2- | tr -d '\n') || cpu=' not reported' # neither line on this architecture
   printf 'host: cpu%s\n' "${cpu}"
-  flags=$(grep -m 1 '^flags' /proc/cpuinfo)
-  for feature in avx512f amx_tile amx_int8 amx_bf16 xfd; do
+  flags=$(grep -m 1 -E '^(flags|Features)' /proc/cpuinfo) || flags='' # no feature line on this architecture
+  for feature in ${features[@]+"${features[@]}"}; do
     if [[ " ${flags} " == *" ${feature} "* ]]; then
       printf 'host: cpu flag %s present\n' "${feature}"
     else
