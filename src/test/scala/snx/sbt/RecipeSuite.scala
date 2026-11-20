@@ -147,7 +147,8 @@ class RecipeSuite extends munit.FunSuite:
 
   test("a staging path in a string is keyed relative to the staging"):
     write(patch, "patch 1")
-    assert(clue(key(knobs)).exists(_.contains("--prefix=${staging}/prefix")))
+    // The argument is written with the host's separator (`getAbsolutePath`), which the token keeps after it.
+    assert(clue(key(knobs)).exists(_.contains(s"--prefix=$${staging}${File.separator}prefix")))
 
   test("the main and test builds of one recipe share a key"):
     write(patch, "patch 1")
@@ -341,6 +342,7 @@ class RecipeSuite extends munit.FunSuite:
     assert(Backend.resolve("tool.v2", main.staging, path, Some(".EXE"), true).isEmpty)
 
   test("elsewhere PATH splits on ':' and names are exact"):
+    assume(!isWindows, "a POSIX PATH cannot hold this host's drive-letter paths")
     val bin = mkdirs(beside / "posix-bin")
     val made = written(bin / toolName, "#!/bin/sh\n")
     made.setExecutable(true)

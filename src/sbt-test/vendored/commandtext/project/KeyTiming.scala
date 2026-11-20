@@ -23,6 +23,12 @@ object KeyTiming {
     log.info(f"probe: the archiver named in text (AR=...) keys in ${mean(Recipe(Step.run("make", s"AR=${archiver.getAbsolutePath}")), 5)}%.1f ms per build, hashed")
     val tree = clang.getParentFile
     val files = Option(tree.listFiles).toSeq.flatten.filter(_.isFile)
-    log.info(f"probe: the compiler's directory as a File (${files.size} files, ${files.map(_.length).sum / 1e6}%.0f MB) keys in ${mean(Recipe(Step.run("make", tree)), 3)}%.1f ms per build")
+    // A host whose compiler sits among files no user may read (Linux's /usr/bin holds setuid chfn) cannot key that
+    // directory, which the plugin refuses with InputUnreadable; the figure is for hosts that can.
+    try log.info(f"probe: the compiler's directory as a File (${files.size} files, ${files.map(_.length).sum / 1e6}%.0f MB) keys in ${mean(Recipe(Step.run("make", tree)), 3)}%.1f ms per build")
+    catch {
+      case unreadable: snx.SNXError.InputUnreadable =>
+        log.info(s"probe: the compiler's directory as a File is not measured on this host: ${unreadable.getMessage}")
+    }
   }
 }
