@@ -52,8 +52,8 @@ object Recipe:
 
 /** One argument of a [[Step.Run]] made of text and files joined into one token, as a tool reads
   * `CFLAGS=-include <header>`, `-I<directory>` or `@<response file>`: written `arg"-I$include"` with the interpolator
-  * [[SNXImports]] provides. Each part is keyed as a lone argument of its kind would be, so a `File` part is keyed by
-  * its content.
+  * [[SNXImports]] provides. Each part is keyed as a lone argument of its kind would be: a `File` part by its content,
+  * a `String` part as its text.
   */
 final class Argument private[sbt] (private[sbt] val parts: Seq[Argument.Part]):
   // An Argument in `s"..."` text renders as this marker, which the key refuses with ArgumentInText: it has no textual
@@ -90,8 +90,8 @@ end Argument
   * pattern over the project matches no build output; links are followed, a cycle entered once. As a [[Step.Run]]
   * argument it expands to the matches when the step starts; as a [[Recipe.libraries]] or [[Recipe.includes]] output, to
   * those the steps left. Keyed by its directory and pattern, and outside this library's source and staging also by the
-  * content of what it matches. A walk that would start in `target` above this library's own staging fails the build with
-  * [[snx.SNXError$.InputHoldsStaging InputHoldsStaging]].
+  * content of what it matches. A walk that would start in `target` above this library's own staging fails the build
+  * with [[snx.SNXError$.InputHoldsStaging InputHoldsStaging]].
   */
 final class Matching private (private[sbt] val directory: File, private[sbt] val pattern: String)
 
@@ -114,34 +114,20 @@ object Step:
     * changes, or on Linux and macOS its change time or file key; every other file the recipe names is hashed on every
     * build.
     *
-    * What the key reads. A `String` is keyed as its text, the source, staging and compiler paths in it keyed relative
-    * to them, and each path the text names is keyed by what it names, in the spelling the host resolves - absolute, a
-    * relative path against the step's directory, through a link, a Windows drive glued to an option (`-IC:\x`,
-    * `/FIC:\x`), a UNC or a rooted path, an msys or Cygwin `/c/...` - and holding any number of spaces, `'`, `=`, `,`,
-    * `:`, `;`, `&` or parentheses, in a directory's name or a file's (`OneDrive - Contoso`, `my config.h`), where the
-    * longer text names something that exists, and on POSIX with those characters escaped by `\` as a shell writes them
-    * (`One\ Drive`). A path ends at a shell operator glued to it (`&&`, `|`, `>`, `)`) and at a quote a `\` escapes
-    * (`\"`, and on POSIX `\'`):
-    *   - a regular file by its content, wherever it is, a file under sbt's `target` (a generated header, another
-    *     library's staging) included;
-    *   - a directory of the build by the content of the files beneath it, links followed, leaving out hidden
-    *     directories beneath it and sbt's `target` directories beneath it (unless the directory named is inside one);
-    *     naming the project directory therefore rebuilds the library whenever any of its sources change. A directory
-    *     in `target` that holds this library's own staging - `target` itself - fails the build with
-    *     [[snx.SNXError$.InputHoldsStaging InputHoldsStaging]], since its content is what the build writes: name the
-    *     directory beneath it that the build reads;
-    *   - a directory outside the build - a system header directory, a toolchain prefix, a monorepo's shared directory,
-    *     or one a link inside the build leads to - by its text alone: to key it, pass it as a `File`, inside an
-    *     [[Argument]] (`arg"-I$dir"`) or as a [[Matching]];
-    *   - this library's own source and staging by their tokens alone.
-    * Text is read as the host resolves it, so: a relative path without `..` resolves against the step's directory,
-    * inside the staging, and names the build's own output; on Windows an msys path into msys's own root (`/tmp`,
-    * `/home/<user>`) is read as rooted on the step's drive, not as msys's installation; and what a shell expands - `~`,
-    * `$HOME`, a glob - is not resolved. Pass such a path as a `File`.
-    * Not read: what a file refers to inside its content - a response file's (`@args.rsp`) flags, a header's
-    * `#include`s, a Makefile's `include`s - nor what a program finds by a path it computes itself; pass the files they
-    * name as `File`s or a `Matching` beside them to key them. An unreadable file the recipe names, or an unreadable
-    * directory beneath a named one, fails the build with [[snx.SNXError$.InputUnreadable InputUnreadable]].
+    * A path written in text - a `String` argument, a `String` part of an [[Argument]], a `String` environment value -
+    * is keyed as text, as written, with this library's source and staging paths and the link's compilers in it replaced
+    * by tokens; what it names is not read. Pass a file or directory whose content the build depends on as a `File`, an
+    * `arg` part (`arg"-include$header"`, not `s"-include$header"`) or a [[Matching]], which are keyed by content
+    * wherever they are, a file under sbt's `target` (a generated header, another library's staging) included, and this
+    * library's own source and staging by their tokens. A directory is keyed by the files beneath it, links followed,
+    * leaving out hidden directories and sbt's `target` directories beneath it unless it lies inside one, so passing the
+    * project directory rebuilds the library whenever any of its sources change. A directory in `target` that holds this
+    * library's own staging - `target` itself - fails the build with
+    * [[snx.SNXError$.InputHoldsStaging InputHoldsStaging]], since its content is what the build writes: pass the
+    * directory beneath it that the build reads. An unreadable file passed, or an unreadable directory beneath one,
+    * fails the build with [[snx.SNXError$.InputUnreadable InputUnreadable]]. Not read: what a file refers to inside its
+    * content - a response file's (`@args.rsp`) flags, a header's `#include`s, a Makefile's `include`s - nor what a
+    * program finds by a path it computes itself; pass the files they name as well to key them.
     */
   final class Run private[sbt] (
     private[sbt] val program: String | File,
@@ -166,7 +152,9 @@ object Step:
     */
   final class Copy private[sbt] (private[sbt] val from: File, private[sbt] val to: File) extends Step
 
-  /** Run `program` with `arguments`. */
+  /** Run `program` with `arguments`; [[Run]] says what of each is keyed, and that a path written in text is keyed as
+    * text.
+    */
   def run(program: String | File, arguments: (String | File | Argument | Matching)*): Run =
     new Run(program, arguments, None, Seq.empty)
 

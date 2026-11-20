@@ -134,16 +134,14 @@ sealed trait Origin derives CanEqual:
     * links the libraries it names, in the order named.
     *
     * The cache keys on the recipe the function returns, not on the function: any change to a step, an argument, an
-    * environment value, an output, or the content of a file the recipe names - as a `File`, an `arg` part, a
-    * `Matching`, or a path in its text, anywhere but this library's own source and staging - rebuilds the library,
-    * wherever the code computing it lives ([[Step.run]] says how text is read). Not keyed: a directory outside the
-    * build named in text, which is keyed when passed as a `File`, an `arg` part or a `Matching`; what a file refers to
-    * inside its content (a response file, a header's includes, a Makefile's); what a program reads by a path it
-    * computes itself; the programs it starts; and the inherited environment beyond the variables the toolchain identity
-    * keys. Text is read as the host resolves it: a relative path without `..` names the build's own output, under the
-    * step's directory in the staging; on Windows an msys path into msys's own root (`/tmp`) is read as rooted on the
-    * step's drive; and what a shell expands (`~`, `$HOME`, a glob) is not resolved, so such a path is passed as a
-    * `File`. `recipe` runs on every build, so it computes and returns a value and does nothing else.
+    * environment value, an output, or the content of a file or directory passed as a `File`, an `arg` part or a
+    * `Matching` - anywhere but this library's own source and staging - rebuilds the library, wherever the code
+    * computing it lives. A path written in text is keyed as text; pass a file or directory whose content the build
+    * depends on as a `File`, an `arg` part or a `Matching` ([[Step$.Run Step.Run]] says what each keys). Not keyed:
+    * what a file refers to inside its content (a response file, a header's includes, a Makefile's); what a program
+    * reads by a path it computes itself; the programs it starts; and the inherited environment beyond the variables
+    * the toolchain identity keys. `recipe` runs on every build, so it computes and returns a value and does nothing
+    * else.
     */
   def command(recipe: BuildContext => Recipe): Vendored =
     new Vendored(this, Backend.Command(recipe), PartialFunction.empty)

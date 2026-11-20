@@ -26,7 +26,7 @@
 > expectFailure OutputOutsideStaging lies outside the build staging directory
 > expectNoStepRan
 
-# sbt's target, which holds the library's staging, named in text: refused on every attempt, and so is the directory
+# sbt's target, which holds the library's staging, passed as a File: refused on every attempt, and so is the directory
 # above the staging, from a target that does not yet hold it.
 > set probeCase := "nametarget"
 > expectFailure InputHoldsStaging which holds this library's own staging
@@ -69,7 +69,7 @@
 > set probeCase := "cmake"
 > expectFailure * cmakelib
 
-# An unreadable file named in text, and an unreadable directory under a Matching, where permissions bind.
+# An unreadable file passed as a File, and an unreadable directory under a Matching, where permissions bind.
 # Each locked after its `set`: sbt 2.1 lists the project directory when it applies settings.
 > set probeCase := "unreadablefile"
 > lock secret/x.h

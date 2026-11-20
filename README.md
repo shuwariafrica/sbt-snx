@@ -301,22 +301,18 @@ its own `env` sets over the inherited one; that file's content is keyed. Run dir
 outputs lie under `ctx.staging`, or the build fails before any step runs. The libraries link in the order named,
 grouped on Linux and MinGW as a CMake build's are; a `Matching(dir, "**/*.o")` names the files a build left by pattern.
 
-What the key reads of the files a recipe names: a `File`, an `arg"..."` part or a `Matching` is keyed by its content,
-and so is a file named by a path in a `String` (`s"-include$header"`), in any spelling the host resolves, its folder and
-file names holding spaces or punctuation (`OneDrive - Contoso`, or `One\ Drive` escaped for a shell) included. Every
-file named is hashed on every build; only a step's program, outside the build, is hashed again only when its size,
-modification time or (Linux, macOS) change time moves. A directory of the build named in text is keyed by its content
-too, leaving out hidden directories and sbt's `target` beneath it, as a `Matching` over the project does; naming
-`target` itself, which holds the library's own staging, fails with `InputHoldsStaging`, so name the directory beneath it
-the build reads. A directory outside the sbt build named in text - a system header directory, a toolchain, a monorepo
-directory above the build, one a link leads to - is keyed by its text alone: pass it as a `File`, as `arg"-I$dir"` or as
-a `Matching` to key the files in it. Text is read as the host resolves it: a relative path without `..` names the
-build's own output under the step's directory, on Windows an msys path into msys's own root (`/tmp`) is read as rooted
-on the step's drive, and what a shell expands (`~`, `$HOME`, a glob) is not resolved, so pass such a path as a `File`.
-What a file refers to inside its content (a response file's flags, a header's `#include`s, a Makefile's `include`s) is
-not followed; name those files too. `ctx.jobs` runs as the host's processor count and keys alike on every host; write it
-with `arg"..."`, since `s"..."` around it fails the build. The recipe is computed on every build before a Git source is
-fetched, so it names the files it uses rather than listing or reading the source; one that does fails with
+A path written in text - a `String` argument, a `String` part of `arg"..."`, a `String` environment value - is keyed as
+text, as written (with the source, staging and compiler paths in it keyed as placeholders, so the main and test builds
+share one archive), and what it names is not read. Pass a file or directory whose content the build depends on as a
+`File`, an `arg"..."` part or a `Matching` - `arg"-include$header"`, not `s"-include$header"` - and it is keyed by its
+content, wherever it is. A directory is keyed by the files beneath it, leaving out hidden directories and sbt's `target`
+beneath it, as a `Matching` over the project does; passing `target` itself, which holds the library's own staging, fails
+with `InputHoldsStaging`, so pass the directory beneath it the build reads. Every file passed is hashed on every build;
+only a step's program, outside the build, is hashed again only when its size, modification time or (Linux, macOS) change
+time moves. What a file refers to inside its content (a response file's flags, a header's `#include`s, a Makefile's
+`include`s) is not followed; pass those files too. `ctx.jobs` runs as the host's processor count and keys alike on every
+host; write it with `arg"..."`, since `s"..."` around it fails the build. The recipe is computed on every build before a
+Git source is fetched, so it names the files it uses rather than listing or reading the source; one that does fails with
 `RecipeChanged` or `RecipeFailed`. Each failure names its library.
 
 ### Caching vendored builds in CI

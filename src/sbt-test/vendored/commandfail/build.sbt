@@ -35,9 +35,9 @@ SNX.libraries ++= {
     case "indirjobs" => Seq(local(ctx => Recipe(Step.run(ctx.clang, "--version").in(ctx.staging / s"b${ctx.jobs}"))))
     case "outside"   => Seq(local(ctx => Recipe(compiled(ctx, ctx.source / "answer.c")).libraries(base / "outside" / "libanswer.a")))
     case "intarget"  => Seq(local(ctx => Recipe(compiled(ctx, ctx.source / "answer.c"), Step.run(ctx.clang, "--version").in(outputs))))
-    case "nametarget"   => Seq(local(keying(s"-I${outputs.getAbsolutePath}")))
-    case "namevendored" => Seq(local(keying(s"-I${(outputs / "snx").getAbsolutePath}")))
-    case "unreadablefile"  => Seq(local(keying(s"-include${(base / "secret" / "x.h").getAbsolutePath}")))
+    case "nametarget"   => Seq(local(keying(outputs)))
+    case "namevendored" => Seq(local(keying(outputs / "snx")))
+    case "unreadablefile"  => Seq(local(keying(base / "secret" / "x.h")))
     case "unreadablematch" => Seq(local(keying(Matching(base / "matchroot", "**/*.h"))))
     case "readsource" =>
       Seq(git(ctx => Recipe(compiled(ctx, s"-DSNX_VARIANT=${IO.read(ctx.source / "VARIANT").trim}", ctx.source / "answer.c"))))

@@ -234,9 +234,9 @@ private[sbt] object Backend:
 
   // The cache key of `recipe`: every step, argument, working directory, environment value and output, in order. A path
   // under the source or the staging directory is keyed relative to it, so the main and test builds of one library
-  // share a key; any other file a value names - as a File, an Argument part, a Matching, or a path written in text -
-  // is keyed by its content. The compilers are keyed by the toolchain identity, the job count as `${jobs}`, and the
-  // source by its own identity, beside this. Every value is framed by its length, so no two recipes render alike.
+  // share a key; any other file a File, an Argument part or a Matching names is keyed by its content, and text is keyed
+  // as written. The compilers are keyed by the toolchain identity, the job count as `${jobs}`, and the source by its
+  // own identity, beside this. Every value is framed by its length, so no two recipes render alike.
   private[sbt] def recipeKey(recipe: Recipe, context: BuildContext, vendoring: Vendoring): Seq[String] =
     recipeKey(recipe, context, vendoring, programDigests, stamp)
 
@@ -252,12 +252,12 @@ private[sbt] object Backend:
     recipe.steps.flatMap {
       case run: Step.Run =>
         val directory = run.directory.getOrElse(context.staging)
-        // Keyed first, so a directory the step cannot run in is refused before its arguments are resolved against it.
+        // Keyed first, so a directory the step cannot run in is refused before its program is resolved against it.
         val in = run.directory.map(dir => s"in=${key.place(dir)}")
         Seq("run", s"program=${key.program(run, directory)}") ++
-          run.arguments.map(argument => s"argument=${key.argument(argument, directory)}") ++
+          run.arguments.map(argument => s"argument=${key.argument(argument)}") ++
           in ++
-          run.environment.map((name, value) => s"env=${framed(name)}${key.argument(value, directory)}")
+          run.environment.map((name, value) => s"env=${framed(name)}${key.argument(value)}")
       case copy: Step.Copy => Seq("copy", s"from=${key.file(copy.from)}", s"to=${key.place(copy.to)}")
     } ++ recipe.libraryFiles.map(output => s"library=${key.output(output)}") ++
       recipe.includeDirectories.map(output => s"include=${key.output(output)}")
@@ -275,8 +275,6 @@ private[sbt] object Backend:
       (roots ++ compilers).map((token, path) => token -> path.toString).sortBy(-_._2.length)
     // Real paths too, so a spelling through a symbolic link is placed where the file is.
     private val tokenRoots: Seq[Path] = roots.flatMap((_, root) => Seq(root) ++ real(root))
-    // The link's compilers, as written and as the files they reach: keyed by the toolchain identity, never read.
-    private val compilerFiles: Seq[Path] = compilers.flatMap((_, compiler) => Seq(compiler) ++ real(compiler))
     private val build: Seq[Path] = vendoring.build.map(normal).flatMap(root => Seq(root) ++ real(root))
     private val targets: Seq[Path] = targetsOf(vendoring)
     // This library's own staging, as written and through any link above it.
@@ -289,52 +287,30 @@ private[sbt] object Backend:
             s"snx: vendored library '${vendoring.library}': the recipe value '${value.replace(Argument.marker, "<Argument>")}' " +
               "holds an Argument interpolated into a String; write the token with arg\"...\" (arg\"-j${context.jobs}\")"))
 
-    // Text keyed as written, with the source, staging and compiler paths replaced by their tokens, then each path the
-    // text names (TextPaths.scan, resolved through any link to the file it reaches) keyed by what it names.
-    // A path that holds this library's staging counts as present, so text naming it is refused on the first build too,
-    // before the staging and the directories above it exist.
-    def text(value: String, directory: File): String =
+    // Text keyed as written, with the source, staging and compiler paths replaced by their tokens; what a path in it
+    // names is not read.
+    private def text(value: String): String =
       refuseMarker(value)
-      val read = TextPaths
-        .scan(
-          value,
-          normal(directory).toString,
-          windows,
-          path => Try(Paths.get(path).nn).toOption.exists(at => Files.exists(at) || holdsStaging(at)))
-        .flatMap(path => Try(Paths.get(path).nn).toOption)
-        .flatMap: path =>
-          refuseStaging(path)
-          real(path).flatMap(named)
-        .distinct
-        .sorted
-      s"${framed(substitute(value, tokens, windows))}${read.map(framed).mkString("reads:", "", "")}"
+      framed(substitute(value, tokens, windows))
 
-    // What a path named in text keys, by its real path: nothing for a path under this library's source or staging
-    // (keyed by the token the text carries), for the link's compilers (keyed by the toolchain identity) or for a
-    // directory outside the build; a regular file by its content wherever it is; a directory of the build by its
-    // content.
-    private def named(path: Path): Option[String] =
-      if within(path, tokenRoots) || compilerFiles.contains(path) then None
-      else if Files.isRegularFile(path) then Some(s"$path@${digestOf(path)}")
-      else if within(path, build) then Some(s"$path@${digestOf(path)}")
-      else None
-
-    def argument(argument: String | File | Argument | Matching, directory: File): String = argument match
-      case value: String     => s"text:${text(value, directory)}"
+    def argument(argument: String | File | Argument | Matching): String = argument match
+      case value: String     => s"text:${text(value)}"
       case path: File        => s"file:${framed(file(path))}"
-      case joined: Argument  => joined.parts.map(part(_, directory)).map(framed).mkString("arg:", "", "")
+      case joined: Argument  => joined.parts.map(part).map(framed).mkString("arg:", "", "")
       case pattern: Matching => s"matching:${framed(matching(pattern))}"
 
-    private def part(part: Argument.Part, directory: File): String = part match
-      case Argument.Part.Text(value) => s"text:${text(value, directory)}"
+    private def part(part: Argument.Part): String = part match
+      case Argument.Part.Text(value) => s"text:${text(value)}"
       case Argument.Part.Path(path)  => s"file:${file(path)}"
       case Argument.Part.Jobs        => "${jobs}"
 
     def file(file: File): String =
       refuseMarker(file.getPath.nn)
       relative(normal(file)).getOrElse:
-        refuseStaging(normal(file))
-        s"${normal(file)}@${content(file)}"
+        val written = normal(file)
+        (Seq(written) ++ real(written)).foreach(at =>
+          refuseStaging(at, if at.equals(written) then written.toString else s"$written (a link to $at)"))
+        s"$written@${content(file)}"
 
     // A path the recipe writes - a run directory, a copy's destination, an output - keyed by where it is and never read,
     // since the build writes it: one outside the staging fails the build before any step runs (`execute`).
@@ -355,14 +331,15 @@ private[sbt] object Backend:
 
     // A directory whose walk would enter this library's own staging is refused: its content is what this build
     // writes, and sbt rewrites its logs there on every run, so no key of it describes the build. A directory above
-    // sbt's target leaves the target out of its walk and is not refused.
-    private def refuseStaging(path: Path): Unit =
+    // sbt's target leaves the target out of its walk and is not refused. The failure names `passed`, the value as the
+    // recipe wrote it, since `path` can be a link's target or a walk's start the recipe never spelt.
+    private def refuseStaging(path: Path, passed: String): Unit =
       if holdsStaging(path) then
         fail(
           SNXError.InputHoldsStaging(
-            s"snx: vendored library '${vendoring.library}': the recipe names $path, which holds this library's own " +
+            s"snx: vendored library '${vendoring.library}': the recipe passes $passed, which holds this library's own " +
               s"staging ${vendoring.staging.getAbsolutePath}: its content is what this build writes, and sbt rewrites " +
-              "its logs under target on every run, so it cannot key the build; name the directory beneath it that the " +
+              "its logs under target on every run, so it cannot key the build; pass the directory beneath it that the " +
               "build reads"))
 
     // A path under a root, or a compiler, as its token; None for any other path.
@@ -379,7 +356,8 @@ private[sbt] object Backend:
         case Some(token) => s"$token:${framed(pattern.pattern)}"
         case None        =>
           val start = walkStart(pattern, directory)
-          (Seq(start) ++ real(start)).foreach(refuseStaging)
+          val passed = s"Matching($directory, \"${pattern.pattern}\")"
+          (Seq(start) ++ real(start)).foreach(at => refuseStaging(at, if at.equals(directory) then passed else s"$passed (walking $at)"))
           val matches =
             walked(matched(pattern, directory.toFile.nn, files = true, targets, (path, error) => fail(failure(path, error))), directory)
               .map(file => framed(s"${normal(file)}@${content(file)}"))
@@ -390,7 +368,7 @@ private[sbt] object Backend:
       case Some(found) =>
         refuseMarker(found.getPath.nn)
         relative(normal(found)).getOrElse(s"${normal(found)}@${programDigest(found)}")
-      case None => s"${argument(run.program, directory)}@unresolved"
+      case None => s"${argument(run.program)}@unresolved"
 
     private def content(file: File): String =
       real(normal(file)).fold("absent")(digestOf)
@@ -419,7 +397,7 @@ private[sbt] object Backend:
     private def digestOf(path: Path): String =
       if !Files.isDirectory(path) then walked(hash(path), path)
       else
-        refuseStaging(path)
+        refuseStaging(path, path.toString)
         val inTargets = within(path, targets)
         val entries = List.newBuilder[String]
         val _ = walked(
@@ -463,9 +441,9 @@ private[sbt] object Backend:
   private def hash(path: Path): String = Digest.sha256Hash(path).hashHexString
 
   // Identifies a vendored build to the backend: the library's name, for its failures; the build's directories (the
-  // build root and the project), whose directories a recipe's text names are keyed by content and whose programs are
-  // hashed on every build; sbt's target directories, left out of a walk of a directory above them; and this library's
-  // own staging, which no directory the recipe names may hold within a target.
+  // build root and the project), whose programs are hashed on every build; sbt's target directories, left out of a
+  // walk of a directory above them; and this library's own staging, which no directory the recipe passes may hold
+  // within a target.
   final private[sbt] case class Vendoring(library: String, build: Seq[File], targets: Seq[File], staging: File)
 
   // sbt's target directories, as written and through any link.

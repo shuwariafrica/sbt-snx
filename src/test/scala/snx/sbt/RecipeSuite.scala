@@ -187,59 +187,41 @@ class RecipeSuite extends munit.FunSuite:
     write(patch, "patch 1")
     assertEquals(key(knobs), before)
 
-  // Paths written in text are keyed by what they name: a file by its content wherever it is, a directory of the build
-  // by its content, a directory outside the build as the text alone.
-  test("a file of the build named in text is keyed by its content"):
-    val header = written(base / "text/config/extra.h", "#define A 1\n")
-    val inText = () => keyOf(Recipe(Step.run("cc", s"-include${header.getAbsolutePath}")))
-    val before = inText()
-    assert(clue(before).exists(_.contains(s"reads:")))
-    write(header, "#define A 2\n")
-    assertNotEquals(inText(), before)
+  // A path written in text is keyed as text, never by what it names; the same file as an arg part is keyed by content.
+  test("a file named in a String or an environment value is keyed as the text, and as an arg part by its content"):
+    val header = written(base / "boundary/config.h", "#define A 1\n")
+    val inText =
+      () => keyOf(Recipe(Step.run("cc", s"-include${header.getAbsolutePath}").env("CFLAGS" -> s"-include ${header.getAbsolutePath}")))
+    val asPart = () => keyOf(Recipe(Step.run("cc", arg"-include$header")))
+    val text = inText()
+    val part = asPart()
+    write(header, "#define A 22\n")
+    assertEquals(read(header), "#define A 22\n")
+    assertEquals(inText(), text)
+    assertNotEquals(asPart(), part)
 
-  test("a file outside the build named in text is keyed by its content"):
-    val header = written(beside / "host-header.h", "#define H 1\n")
-    val inText = () => keyOf(Recipe(Step.run("cc", s"CFLAGS=-include ${header.getAbsolutePath} -O2")))
-    val before = inText()
-    write(header, "#define H 22\n")
-    assertNotEquals(inText(), before)
+  test("a String part of an arg value is keyed as its text"):
+    val header = written(base / "boundary/part.h", "1")
+    val other = written(base / "boundary/other.h", "1")
+    val key = () => keyOf(Recipe(Step.run("cc", arg"-include${header.getAbsolutePath}")))
+    val before = key()
+    write(header, "22")
+    assertEquals(key(), before)
+    assertNotEquals(keyOf(Recipe(Step.run("cc", arg"-include${other.getAbsolutePath}"))), before)
 
-  test("a spelling through a symbolic link is keyed by the file it reaches"):
-    val header = written(base / "linked/config/extra.h", "#define A 1\n")
-    val spelt = linked(beside / "build-link", base)
-    val key = keyOf(Recipe(Step.run("cc", s"-include${spelt.getAbsolutePath}/linked/config/extra.h")))
-    assert(clue(key).exists(_.contains(header.toPath.nn.toRealPath().toString)))
+  test("text naming the target that holds the staging is keyed as text, not refused"):
+    directory(stagedRoot / "tgt")
+    val key = stagedKey(Recipe(Step.run("cc", s"-I${(stagedRoot / "tgt").getAbsolutePath}")))
+    assert(clue(key).exists(_.contains((stagedRoot / "tgt").getAbsolutePath)))
 
-  test("a relative spelling is resolved against the step's directory, which need not exist"):
-    val header = written(base / "relative/extra.h", "#define A 1\n")
-    val relative = main.staging.toPath.nn.relativize(header.toPath).toString
-    assert(!main.staging.exists)
-    assert(clue(keyOf(Recipe(Step.run("cc", s"-include$relative")))).exists(_.contains(header.toPath.nn.toRealPath().toString)))
-
-  test("a directory outside the build named in text is keyed as the text alone"):
-    val outside = mkdirs(beside / "include")
-    write(outside / "x.h", "1")
-    val named = keyOf(Recipe(Step.run("cc", s"-I${outside.getAbsolutePath}")))
-    assert(clue(named).exists(entry => entry.contains("-I") && entry.endsWith("reads:")))
-    write(outside / "x.h", "2")
-    assertEquals(keyOf(Recipe(Step.run("cc", s"-I${outside.getAbsolutePath}"))), named)
-
-  test("a directory of the build named in text is keyed by its content"):
-    val include = mkdirs(base / "dirtext/config")
-    val header = written(include / "extra.h", "#define A 1\n")
-    val inText = () => keyOf(Recipe(Step.run("cc", s"-I${include.getAbsolutePath}")))
-    val before = inText()
-    assert(clue(before).exists(_.contains(s"${include.toPath.nn.toRealPath()}@")))
-    write(header, "#define A 3\n")
-    assertNotEquals(inText(), before)
-
-  test("a file under sbt's target named in text is keyed by its content"):
-    val output = written(target / "out/text/x.o", "1")
-    val inText = () => keyOf(Recipe(Step.run("cc", output.getAbsolutePath)))
-    val before = inText()
-    assert(clue(before).exists(_.contains("x.o@")))
-    write(output, "2")
-    assertNotEquals(inText(), before)
+  test("a directory outside the build passed as a File or an arg part is keyed by its content"):
+    val header = written(beside / "monorepo-include/shared.h", "1")
+    val asFile = () => keyOf(Recipe(Step.run("cc", beside / "monorepo-include")))
+    val asPart = () => keyOf(Recipe(Step.run("cc", arg"-I${beside / "monorepo-include"}")))
+    val (file, part) = (asFile(), asPart())
+    write(header, "22")
+    assertNotEquals(asFile(), file)
+    assertNotEquals(asPart(), part)
 
   test("a File under sbt's target is keyed by its content"):
     val output = written(target / "out/file/gen.h", "1")
@@ -268,12 +250,9 @@ class RecipeSuite extends munit.FunSuite:
     write(tree / ".git/index", "changed")
     assertEquals(keyOf(Recipe(Step.run("cc", new File(tree, ".")))), before)
 
-  test("a host path in text with no file there is keyed as text"):
-    assert(clue(keyOf(Recipe(Step.run("cc", "-I/no/such/dir")))).contains("argument=text:14:-I/no/such/dirreads:"))
-
-  test("the link's compiler in a String is keyed by its token, and not read"):
+  test("the link's compiler in a String is keyed by its token"):
     val key = keyOf(Recipe(Step.run("make", s"CC=${clang.getAbsolutePath} --target=x")))
-    assert(clue(key).exists(_.endsWith("CC=${clang} --target=xreads:")))
+    assert(clue(key).exists(_.endsWith("CC=${clang} --target=x")))
 
   test("an Argument in s\"...\" text is refused with ArgumentInText"):
     refusedNaming[SNXError.ArgumentInText](keyOf(Recipe(Step.run("make", s"-j${main.jobs}"))))
@@ -299,7 +278,7 @@ class RecipeSuite extends munit.FunSuite:
     assert(clue(keyOf(Recipe(Step.run("make", arg"-j${main.jobs}")))).exists(_.contains("7:${jobs}")))
 
   test("an Argument's parts key apart from one part holding their rendering"):
-    assertNotEquals(keyOf(Recipe(Step.run("cc", arg"a${"b"}x"))), keyOf(Recipe(Step.run("cc", arg"areads:text:breads:text:x"))))
+    assertNotEquals(keyOf(Recipe(Step.run("cc", arg"a${"b"}x"))), keyOf(Recipe(Step.run("cc", arg"atext:btext:x"))))
 
   test("env called twice keeps both variables"):
     val both = keyOf(Recipe(Step.run("make").env("A" -> "1").env("B" -> "2")))
@@ -414,7 +393,7 @@ class RecipeSuite extends munit.FunSuite:
     assertNotEquals(keyOf(Recipe(Step.run(host))), before)
 
   // Links inside a keyed directory are followed, a cycle entered once.
-  test("a link inside a directory of the build is keyed by its target's content: named in text, as a File, through a Matching"):
+  test("a link inside a directory of the build is keyed by its target's content: as a File, through a Matching"):
     val shared = mkdirs(beside / "shared")
     val header = written(shared / "real.h", "#define R 1\n")
     val linkDir = mkdirs(base / "linkdir")
@@ -422,36 +401,24 @@ class RecipeSuite extends munit.FunSuite:
     link(linkDir / "loop", linkDir)
     val view = mkdirs(beside / "linkview")
     link(view / "v.h", header)
-    val inText = () => keyOf(Recipe(Step.run("cc", s"-I${linkDir.getAbsolutePath}")))
     val asFile = () => keyOf(Recipe(Step.run("cc", linkDir)))
     val matching = () => keyOf(Recipe(Step.run("cc", Matching(view, "*.h"))))
-    val text = inText()
     val file = asFile()
     val matched = matching()
     write(header, "#define R 22\n")
-    assertNotEquals(inText(), text)
     assertNotEquals(asFile(), file)
     assertEquals(listed(Matching(view, "*.h"), Seq.empty), Seq("v.h"))
     assertNotEquals(matching(), matched)
 
-  test("a link inside the build to a directory outside it is keyed as the text alone"):
-    val shared = mkdirs(beside / "vendor-shared")
-    write(shared / "v.h", "1")
-    val vendorLink = linked(base / "vendorlink", shared)
-    assert(clue(keyOf(Recipe(Step.run("cc", s"-I${vendorLink.getAbsolutePath}")))).exists(entry =>
-      entry.contains("-I") && entry.endsWith("reads:")))
-
   test("an unreadable directory beneath a named one fails with InputUnreadable naming the library"):
     val data = mkdirs(base / "dataroot")
     val locked = unreadable(mkdirs(data / "locked"))
-    try refusedNaming[SNXError.InputUnreadable](keyOf(Recipe(Step.run("cc", s"-I${data.getAbsolutePath}"))))
+    try refusedNaming[SNXError.InputUnreadable](keyOf(Recipe(Step.run("cc", data))))
     finally readable(locked)
 
-  test("an unreadable file named in text, or passed as a File, fails with InputUnreadable naming the library"):
+  test("an unreadable file passed as a File fails with InputUnreadable naming the library"):
     val secret = unreadable(written(base / "secret/x.h", "x"))
-    try
-      refusedNaming[SNXError.InputUnreadable](keyOf(Recipe(Step.run("cc", s"-include${secret.getAbsolutePath}"))))
-      refusedNaming[SNXError.InputUnreadable](keyOf(Recipe(Step.run("cc", secret))))
+    try refusedNaming[SNXError.InputUnreadable](keyOf(Recipe(Step.run("cc", secret))))
     finally readable(secret)
 
   test("an unreadable directory under a Matching fails with InputUnreadable naming the library"):
@@ -548,18 +515,25 @@ class RecipeSuite extends munit.FunSuite:
   private val stagedVendoring = Backend.Vendoring("lib", Seq(base), Seq(stagedRoot / "tgt"), staged)
   private def stagedKey(recipe: Recipe): Seq[String] = Backend.recipeKey(recipe, main.copy(staging = staged), stagedVendoring)
 
-  test("naming sbt's target, which holds the library's staging, fails with InputHoldsStaging naming the library"):
+  test("passing sbt's target as a File, which holds the library's staging, fails with InputHoldsStaging naming the library"):
     directory(stagedRoot / "tgt")
     refusedNaming[SNXError.InputHoldsStaging](stagedKey(Recipe(Step.run("cc", stagedRoot / "tgt"))))
+
+  test("InputHoldsStaging names what the recipe passed: a link to target, a Matching's directory and pattern"):
+    directory(stagedRoot / "tgt")
+    val outlink = linked(base / "stagedlinks/outlink", stagedRoot / "tgt")
+    val throughLink = refused[SNXError.InputHoldsStaging](stagedKey(Recipe(Step.run("cc", outlink))))
+    assert(clue(throughLink.getMessage).contains(s"passes ${outlink.getAbsolutePath} (a link to "))
+    val walking = refused[SNXError.InputHoldsStaging](stagedKey(Recipe(Step.run("cc", Matching(stagedRoot, "tgt/**/*.h")))))
+    assert(clue(walking.getMessage).contains(s"passes Matching(${stagedRoot.getAbsolutePath}, \"tgt/**/*.h\") (walking "))
 
   test("a directory in target above the staging is refused before the staging exists"):
     directory(stagedRoot / "tgt/out/snx")
     assert(!staged.exists)
     val _ = refused[SNXError.InputHoldsStaging](stagedKey(Recipe(Step.run("cc", stagedRoot / "tgt/out/snx"))))
 
-  test("target is refused named in text, as a Matching's directory, and as a Matching starting there"):
+  test("target is refused as a Matching's directory, and as a Matching starting there"):
     directory(stagedRoot / "tgt")
-    val _ = refused[SNXError.InputHoldsStaging](stagedKey(Recipe(Step.run("cc", s"-I${(stagedRoot / "tgt").getAbsolutePath}"))))
     val _ = refused[SNXError.InputHoldsStaging](stagedKey(Recipe(Step.run("cc", Matching(stagedRoot / "tgt", "**/*.h")))))
     val _ = refused[SNXError.InputHoldsStaging](stagedKey(Recipe(Step.run("cc", Matching(stagedRoot, "tgt/**/*.h")))))
 
@@ -568,7 +542,7 @@ class RecipeSuite extends munit.FunSuite:
     assert(clue(stagedKey(Recipe(Step.run("cc", stagedRoot / "tgt/gen")))).exists(_.contains("gen@")))
     val _ = stagedKey(Recipe(Step.run("cc", stagedRoot)))
 
-  test("an Argument in a run directory is refused with ArgumentInText, before the step's arguments are resolved"):
+  test("an Argument in a run directory is refused with ArgumentInText"):
     refusedNaming[SNXError.ArgumentInText](keyOf(Recipe(Step.run("cc", "-x").in(main.staging / s"b${main.jobs}"))))
 
   test("an Argument in a File's path is refused with ArgumentInText"):
@@ -592,17 +566,7 @@ class RecipeSuite extends munit.FunSuite:
       val test = at.copy(staging = context("test").staging)
       assertEquals(keyOf(argon2(test), test), keyOf(argon2(at), at), at.runtime.toString)
 
-  // Read 5: a path whose spaces or apostrophe a shell escapes, a link into target, text naming target before it exists,
-  // and a write location in target.
-  test("a file named in text with its spaces escaped by a backslash is keyed by its content"):
-    assume(!isWindows, "on Windows a backslash is a separator")
-    val header = written(base / "One Drive - Co/extra.h", "#define A 1\n")
-    val escaped = header.getAbsolutePath.replace(" ", "\\ ")
-    val inText = () => keyOf(Recipe(Step.run("make", s"CFLAGS=-include $escaped")))
-    val before = inText()
-    write(header, "#define A 2\n")
-    assertNotEquals(inText(), before)
-
+  // A link into target, a directory in target named before it exists, and a write location in target.
   test("a link into target inside the project leaves the staging out of the project's digest and its Matching"):
     val dir = mkdirs(base / "linkedtarget")
     val projectTarget = dir / "target"
@@ -633,14 +597,14 @@ class RecipeSuite extends munit.FunSuite:
     assertEquals(keyOf(Recipe(Step.run("cc", Matching(spelt, "**/*.h"))), on), before)
     assertEquals(listed(Matching(spelt, "**/*.h"), Seq((dir / "target").toPath.nn.toAbsolutePath.nn.normalize.nn)), Seq("a.h"))
 
-  test("text naming a directory in target above the staging is refused before that directory exists"):
+  test("a directory in target above the staging, passed as a File, is refused before that directory exists"):
     val fresh = base / "freshtarget"
     val freshStaging = fresh / "tgt/out/snx/vendored/main/lib"
     directory(fresh / "tgt")
     val on = Backend.Vendoring("lib", Seq(base), Seq(fresh / "tgt"), freshStaging)
     assert(!(fresh / "tgt/out/snx").exists)
     val _ = refused[SNXError.InputHoldsStaging](
-      Backend.recipeKey(Recipe(Step.run("cc", s"-I${(fresh / "tgt/out/snx").getAbsolutePath}")), main.copy(staging = freshStaging), on))
+      Backend.recipeKey(Recipe(Step.run("cc", fresh / "tgt/out/snx")), main.copy(staging = freshStaging), on))
 
   test("a write location in target is not refused as an input"):
     directory(stagedRoot / "tgt")
@@ -671,9 +635,9 @@ class RecipeSuite extends munit.FunSuite:
     val compiled = build / "project/project/target/config-classes/$Wrap1.class"
     write(compiled, "1")
     val on = Backend.Vendoring("lib", Seq(base), SNXPlugin.targets(build, build, build / "target"), main.staging)
-    val before = keyOf(Recipe(Step.run("cc", s"-I${build.getAbsolutePath}")), on)
+    val before = keyOf(Recipe(Step.run("cc", build)), on)
     write(compiled, "22")
-    assertEquals(keyOf(Recipe(Step.run("cc", s"-I${build.getAbsolutePath}")), on), before)
+    assertEquals(keyOf(Recipe(Step.run("cc", build)), on), before)
 
   // The steps the plugin runs, through a portable program: the JDK running Tool.java, whose operations are its
   // arguments.

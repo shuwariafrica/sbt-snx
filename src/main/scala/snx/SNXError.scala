@@ -62,9 +62,10 @@ object SNXError:
     */
   final case class InputUnreadable(message: String) extends SNXError(message)
 
-  /** A directory a `command` recipe names that holds the library's own staging inside sbt's `target` - the target
-    * itself, or a directory in it above the staging - whose content is what the build writes, so it cannot key the
-    * build; the recipe names the directory beneath it that the build reads.
+  /** A directory a `command` recipe passes - as a `File` (an argument, an environment value or a copy's source), an
+    * `arg` part or a `Matching`, as written or through a link - that holds the library's own staging inside sbt's
+    * `target` - the target itself, or a directory in it above the staging - whose content is what the build writes, so
+    * it cannot key the build; the recipe passes the directory beneath it that the build reads.
     */
   final case class InputHoldsStaging(message: String) extends SNXError(message)
 

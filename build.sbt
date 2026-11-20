@@ -76,7 +76,7 @@ def scriptedSettings: Seq[Def.Setting[?]] = Seq(
     // (`dynamic`, `testdynamic` - macOS install names and Windows DLL redistribution are follow-ons), and the
     // zlib-backed capstone (`hello`). On MinGW the CMake backend fails fast by design, so its fixtures are skipped
     // there; the command-backed ones build from their own recipes on every toolchain.
-    val commandBacked = Set("command", "worktree", "commandcache", "commandfail", "commandtext")
+    val commandBacked = Set("command", "worktree", "commandcache", "commandfail")
     new SimpleFileFilter(file =>
       file.getName match {
         case "detect"      => os.isEmpty
