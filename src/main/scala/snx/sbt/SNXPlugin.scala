@@ -250,8 +250,9 @@ object SNXPlugin extends AutoPlugin:
       val projectBase = baseDirectory.value
       val rootBase = (LocalRootProject / baseDirectory).value
       val build =
-        (spec: Vendored, linkage: Linkage) =>
+        (name: String, spec: Vendored, linkage: Linkage) =>
           buildVendored(
+            name,
             spec,
             linkage,
             mode,
@@ -260,6 +261,7 @@ object SNXPlugin extends AutoPlugin:
             clangPP.toFile.nn,
             projectBase,
             rootBase,
+            target.value,
             staging,
             cache,
             converter,
@@ -333,7 +335,7 @@ object SNXPlugin extends AutoPlugin:
     requirements: Usage,
     libraries: Map[String, NativeLibrary],
     runtime: NativeRuntime,
-    build: (Vendored, Linkage) => (Artefacts, Boolean)): (NativeConfig, Seq[String]) =
+    build: (String, Vendored, Linkage) => (Artefacts, Boolean)): (NativeConfig, Seq[String]) =
     val report = Seq.newBuilder[String]
     def realise(config: NativeConfig, name: String, mode: LinkMode): NativeConfig =
       libraries.get(name) match
@@ -342,7 +344,7 @@ object SNXPlugin extends AutoPlugin:
           library.provisioning match
             case Provisioning.Vendored(spec) =>
               if linkage == Linkage.Dynamic then requireDynamicVendorable(runtime, mode, name)
-              val (artefacts, built) = build(spec, linkage)
+              val (artefacts, built) = build(name, spec, linkage)
               report +=
                 s"snx library '$name': vendored, ${if built then "built" else "cache hit"}, linked ${linkageLabel(linkage)} (${artefacts.libraries.size} file(s))"
               val withLibraries = config
@@ -746,6 +748,7 @@ object SNXPlugin extends AutoPlugin:
   // content-hashed, while a resolved commit is already an immutable identity, so a Git origin keys on it and never
   // walks the fetched tree.
   private def buildVendored(
+    named: String,
     library: Vendored,
     linkage: Linkage,
     mode: Mode,
@@ -754,19 +757,27 @@ object SNXPlugin extends AutoPlugin:
     clangPP: File,
     projectBase: File,
     rootBase: File,
+    projectTarget: File,
     staging: File,
     cache: BuildWideCacheConfiguration,
     converter: FileConverter,
     log: Logger): (Artefacts, Boolean) =
+    // What identifies the build to its backend, for the library staged as `name` under `staging`.
+    def vendoring(name: String) =
+      Backend.Vendoring(named, Seq(rootBase, projectBase).distinct, targets(rootBase, projectBase, projectTarget), new File(staging, name))
     // Refused from the path alone, so a project directory outside the source fails before any fetch or digest.
     library.backend match
-      case cmake: Backend.CMake  => val _ = Backend.projectDirectory(cmake.directory)
-      case Backend.Command(_, _) => ()
+      case cmake: Backend.CMake =>
+        try
+          val _ = Backend.projectDirectory(cmake.directory)
+        catch case error: SNXError => fail(SNXError.forLibrary(named, error))
+      case Backend.Command(_) => ()
     library.origin match
       case Origin.Local(directory) =>
         val location = resolveDir(directory, projectBase, rootBase)
+        val name = slug(directory)
         cachedBuild(
-          slug(directory),
+          name,
           library.backend,
           runtime,
           linkage,
@@ -774,16 +785,24 @@ object SNXPlugin extends AutoPlugin:
           clang,
           clangPP,
           Vendored.contentDigest(location),
-          () => location,
+          location,
+          location,
+          () => (),
+          vendoring(name),
           staging,
           cache,
           converter,
-          log)
+          log
+        )
       case Origin.Git(uri, ref) =>
         val clones = new File(staging, "clones")
         val commit = resolveGitCommit(uri, ref, log)
+        val name = s"git-${Hash.trimHashString(s"$uri@$commit", 8)}"
+        // The source, fetched on a miss only.
+        def fetched(): Unit =
+          val _ = fetch(uri, commit, clones, log)
         cachedBuild(
-          s"git-${Hash.trimHashString(s"$uri@$commit", 8)}",
+          name,
           library.backend,
           runtime,
           linkage,
@@ -791,7 +810,12 @@ object SNXPlugin extends AutoPlugin:
           clang,
           clangPP,
           s"git:$uri@$commit",
-          () => fetch(uri, commit, clones, log),
+          worktree(uri, commit, clones),
+          // Outside the clone: a recipe that reads it can create it (sbt's IO.read makes a file's parent), and the clone's
+          // presence is what tells `fetch` the source is already fetched.
+          new File(staging, s"$name.unfetched"),
+          () => fetched(),
+          vendoring(name),
           staging,
           cache,
           converter,
@@ -812,16 +836,25 @@ object SNXPlugin extends AutoPlugin:
     clang: File,
     clangPP: File,
     sourceId: String,
-    locate: () => File,
+    location: File,
+    unread: File,
+    locate: () => Unit,
+    vendoring: Backend.Vendoring,
     staging: File,
     cache: BuildWideCacheConfiguration,
     converter: FileConverter,
     log: Logger): (Artefacts, Boolean) =
     val sourceStaging = new File(staging, name)
     val outputDir = cache.outputDirectory
+    val context = BuildContext(location, sourceStaging, runtime, linkage, mode, clang, clangPP, Argument.jobs)
+    // Keyed against a source (`unread`: for a Git origin a path no fetch creates) and a staging directory that do not
+    // exist, so a recipe reading either keys the same whether or not an earlier build left them on disk, and the check
+    // after the fetch refuses it on every attempt rather than only the first. A Local source is present and keyed by
+    // its content, so it is keyed where it is.
+    val backendKey = backend.cacheKey(context.copy(source = unread, staging = new File(staging, s"$name.unread")), vendoring)
     val key =
       List(BuildInfo.version, runtime.toString, linkage.toString, mode.name, toolchainId(clang, clangPP), sourceId) ++
-        backend.cacheKey(runtime)
+        backendKey
     val locks = buildLocks.updateAndGet(current => if current.contains(key) then current else current.updated(key, new Object))
     val lock = locks(key)
     // The action-cache block runs only on a miss, so it flips this to record that the archive was built this run
@@ -836,10 +869,18 @@ object SNXPlugin extends AutoPlugin:
         cache
       ) { _ =>
         built.set(true)
-        val location = locate()
+        locate()
         IO.delete(sourceStaging)
-        val artefacts = backend.build(BuildContext(location, sourceStaging, runtime, linkage, mode, clang, clangPP, log))
-        requireStaged(artefacts.libraries ++ artefacts.includes, sourceStaging)
+        // The key was computed before the source was fetched and the staging cleared; a backend key that differs now
+        // read one of them, so the key does not describe this build and caching under it would serve the wrong archive.
+        if backend.cacheKey(context, vendoring) != backendKey then
+          fail(
+            SNXError.RecipeChanged(
+              s"snx: vendored library '${vendoring.library}': its recipe differs between when it was keyed and when it ran: " +
+                "a recipe is keyed before its source is fetched and its staging prepared, so it names the files it uses - " +
+                "a Matching for a set of them - rather than listing or reading the source"))
+        val artefacts = backend.build(context, vendoring, log)
+        requireStaged(artefacts.libraries ++ artefacts.includes, sourceStaging, vendoring.library)
         val outputs =
           artefacts.libraries.map(file => converter.toVirtualFile(file.toPath.nn)) ++
             artefacts.includes.map(dir => ActionCache.packageDirectory(converter.toVirtualFile(dir.toPath.nn), converter, outputDir))
@@ -852,13 +893,29 @@ object SNXPlugin extends AutoPlugin:
   end cachedBuild
 
   // Verify every vendored output lies under `staging` so the action cache can capture it; fail clearly otherwise.
-  private[sbt] def requireStaged(outputs: Seq[File], staging: File): Unit =
+  private[sbt] def requireStaged(outputs: Seq[File], staging: File, library: String): Unit =
     val root = staging.toPath.nn.toAbsolutePath.nn.normalize.nn
     outputs.foreach: output =>
       if !output.toPath.nn.toAbsolutePath.nn.normalize.nn.startsWith(root) then
         fail(
-          SNXError.OutputOutsideStaging(s"snx: vendored output '${output.getAbsolutePath}' lies outside the build staging directory " +
-            s"'${staging.getAbsolutePath}'; a backend must write its archives and headers under the BuildContext staging directory"))
+          SNXError.OutputOutsideStaging(
+            s"snx: vendored library '$library': '${output.getAbsolutePath}' lies outside the build staging directory " +
+              s"'${staging.getAbsolutePath}'; a build writes its outputs, and a recipe its steps' directories and copies, " +
+              "under the BuildContext staging directory"))
+
+  // sbt's target directories, left out of a walk of a directory above them (a recipe naming the project directory),
+  // so the outputs sbt rewrites on every build do not change the key; a path named inside them is keyed by content.
+  // The project's own `target` is one of them wherever it is set, so the vendored staging always lies in one.
+  private[sbt] def targets(rootBase: File, projectBase: File, projectTarget: File): Seq[File] =
+    (Seq(new File(rootBase, "target"), new File(projectBase, "target"), projectTarget) ++ metaBuildTargets(rootBase)).distinct
+
+  // Each meta-build's target under `build`: sbt compiles a loaded build's .sbt files into its `project/target`
+  // (`BuildPaths.evalOutputDirectory`), and loads `project` as a further build while it holds anything but its
+  // `target` (`Load.hasDefinition`), so a reload rewrites `project/target`, `project/project/target`, and on down.
+  private def metaBuildTargets(build: File): List[File] =
+    val meta = new File(build, "project")
+    val loaded = Option(meta.listFiles).exists(_.exists(_.nn.getName != "target"))
+    new File(meta, "target") :: (if loaded then metaBuildTargets(meta) else Nil)
 
   // Resolve a Local vendored directory: relative to the project base if it exists there, else to the build root.
   private def resolveDir(directory: String, projectBase: File, rootBase: File): File =
@@ -872,10 +929,14 @@ object SNXPlugin extends AutoPlugin:
   // the object store after `git fetch` has returned, and a backend walking a worktree with a repository inside it then
   // reads files that were enumerated and deleted before it reached them. The window is git's, not any one
   // filesystem's; a filesystem with slow metadata operations only widens it far enough to hit on every cold build.
+  // The worktree `fetch` stages `uri` at `commit` into, known before the fetch runs.
+  private def worktree(uri: String, commit: String, clones: File): File =
+    new File(new File(clones, Hash.trimHashString(s"$uri@$commit", 8)), "source")
+
   private def fetch(uri: String, commit: String, clones: File, log: Logger): File =
-    val staging = new File(clones, Hash.trimHashString(s"$uri@$commit", 8))
+    val worktree = SNXPlugin.worktree(uri, commit, clones)
+    val staging = worktree.getParentFile.nn
     val repository = new File(staging, "git")
-    val worktree = new File(staging, "source")
     def checkout(ref: String): Unit =
       IO.createDirectory(worktree)
       git(

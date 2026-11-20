@@ -129,19 +129,24 @@ sealed trait Origin derives CanEqual:
   def cmake(targets: String*): Vendored.CMake =
     new Vendored.CMake(this, Backend.CMake(targets, PartialFunction.empty, ".", None), PartialFunction.empty)
 
-  /** Build with a user-supplied function from [[BuildContext]] to [[Artefacts]], writing outputs under the context's
-    * staging directory and honouring its [[Linkage]] (an archive for `Static`, a shared library for `Dynamic`). The
-    * returned libraries link in the order returned, several archives grouped as [[Artefacts]] describes.
+  /** Build by running the [[Recipe]] `recipe` computes for each build's [[BuildContext]] - a Makefile, autotools or
+    * hand-rolled compile CMake does not cover, on any toolchain, MinGW included. The plugin runs the recipe's steps and
+    * links the libraries it names, in the order named.
     *
-    * `token` is the build's cache identity, and it is your responsibility. This function is opaque to snx, so the cache
-    * keys on `token` alone - the source content, the toolchain, and the resolved runtime/linkage/mode are tracked for
-    * you, but a change to the function's OWN logic is invisible. Change `token` on every change to the build (a flag, a
-    * target, the recipe); otherwise a warm cache silently reuses the previous archive and a green build links a stale
-    * one. Deriving `token` from the build's inputs - a version suffix you bump, or the flags folded into the string -
-    * keeps it honest.
+    * The cache keys on the recipe the function returns, not on the function: any change to a step, an argument, an
+    * environment value, an output, or the content of a file the recipe names - as a `File`, an `arg` part, a
+    * `Matching`, or a path in its text, anywhere but this library's own source and staging - rebuilds the library,
+    * wherever the code computing it lives ([[Step.run]] says how text is read). Not keyed: a directory outside the
+    * build named in text, which is keyed when passed as a `File`, an `arg` part or a `Matching`; what a file refers to
+    * inside its content (a response file, a header's includes, a Makefile's); what a program reads by a path it
+    * computes itself; the programs it starts; and the inherited environment beyond the variables the toolchain identity
+    * keys. Text is read as the host resolves it: a relative path without `..` names the build's own output, under the
+    * step's directory in the staging; on Windows an msys path into msys's own root (`/tmp`) is read as rooted on the
+    * step's drive; and what a shell expands (`~`, `$HOME`, a glob) is not resolved, so such a path is passed as a
+    * `File`. `recipe` runs on every build, so it computes and returns a value and does nothing else.
     */
-  def command(token: String)(build: BuildContext => Artefacts): Vendored =
-    new Vendored(this, Backend.Command(token, build), PartialFunction.empty)
+  def command(recipe: BuildContext => Recipe): Vendored =
+    new Vendored(this, Backend.Command(recipe), PartialFunction.empty)
 end Origin
 
 object Origin:

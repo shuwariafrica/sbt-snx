@@ -1,51 +1,54 @@
-import scala.sys.process.Process
-
 enablePlugins(SNXPlugin)
 
 scalaVersion := sys.props("scala.version")
 
 SNX.deliverable := Executable
 
-// A vendored library built by the Command escape hatch: the function drives clang and the archiver itself (no CMake),
-// so it works on every toolchain, MinGW included. `token` keys the build cache. It compiles vendor/answer into two
-// archives - libanswer.a, whose snx_answer calls snx_answer_base in libbase.a - and exposes vendor/answer/include; the
-// resulting Artefacts fold into the native link exactly as the CMake backend's do. It returns libbase.a first, an order
-// GNU ld rejects unless the plugin groups the archives, so the link proves the group on Linux and MinGW and the
-// ungrouped archives on macOS and MSVC. It uses ctx.clang - the compiler the Scala Native link uses, honouring an
-// SNX.clang override - so the command build is toolchain-consistent with the link; the archiver resolution mirrors
-// link/wholearchive.
-SNX.libraries += NativeLibrary("answer", Vendored.local("vendor/answer").command("answer-2") { ctx =>
-  val clang = ctx.clang
-  val clangDir = clang.getParentFile
-  val exe = if (clang.getName.endsWith(".exe")) ".exe" else ""
-  // The vendored fold caches the returned paths, so every output (the archives and the headers) must live under the
-  // build context's staging directory; copy the headers there rather than exposing the source tree directly.
-  val include = ctx.staging / "include"
-  IO.createDirectory(ctx.staging)
-  IO.copyDirectory(ctx.source / "include", include)
-  val msvc = ctx.runtime match
-    case NativeRuntime.Windows(_, ABI.Msvc) => true
-    case _                                  => false
-  // The archiver is not always beside clang (alpine has /usr/bin/ar but no llvm-ar): try beside clang, then PATH.
-  val names = (if (msvc) Seq("llvm-lib", "lib") else Seq("llvm-ar", "ar")).map(_ + exe)
-  def onPath(name: String): Seq[File] =
-    sys.env.getOrElse("PATH", "").split(java.io.File.pathSeparator).toSeq.map(dir => new File(dir, name))
-  val archiver =
-    (names.map(name => new File(clangDir, name)) ++ names.flatMap(onPath)).find(_.canExecute).getOrElse(sys.error("no archiver found"))
-  def archive(name: String): File = {
-    val obj = ctx.staging / s"$name.o"
-    val lib = ctx.staging / s"lib$name.a"
-    val compiled =
-      Process(
-        Seq(clang.getAbsolutePath, "-c", (ctx.source / s"$name.c").getAbsolutePath, "-I", include.getAbsolutePath, "-o", obj.getAbsolutePath)).!
-    assert(compiled == 0, s"$name.c failed to compile (exit $compiled)")
-    val command =
-      if (msvc) Seq(archiver.getAbsolutePath, "-out:" + lib.getAbsolutePath, obj.getAbsolutePath)
-      else Seq(archiver.getAbsolutePath, "rcs", lib.getAbsolutePath, obj.getAbsolutePath)
-    assert(Process(command).! == 0, s"${lib.getName} failed to build using ${archiver.getName}")
-    lib
-  }
-  val libraries = Seq(archive("base"), archive("answer"))
-  ctx.log.info(s"snx vendored/command: built ${libraries.map(_.getName).mkString(", ")} via ${archiver.getName} for ${ctx.runtime}")
-  Artefacts(libraries, Seq(include))
-})
+// A vendored library built from a recipe: the plugin runs clang and an archiver, no CMake, so it builds on every
+// toolchain, MinGW included. It compiles vendor/answer into two archives - libanswer, whose snx_answer calls
+// snx_answer_base in libbase - and names libbase first, an order GNU ld rejects unless the plugin groups the archives,
+// so the link proves the group on Linux and MinGW and the ungrouped archives on macOS and MSVC. The archiver is named
+// by its bare name and found on the PATH the step sets, clang's directory first, so every cell resolves a program by
+// name. On Windows the headers reach the staging through a .cmd the recipe copies there and runs by its bare name,
+// found through PATHEXT; elsewhere through a copy.
+SNX.libraries += {
+  val headersCmd = baseDirectory.value / "tools" / "headers.cmd"
+  NativeLibrary(
+    "answer",
+    Vendored.local("vendor/answer").command { ctx =>
+      val include = ctx.staging / "include"
+      val archiver = Toolchain.archiver(ctx)
+      val name = archiver.getName.stripSuffix(".exe")
+      val path = (ctx.clang.getParentFile.getAbsolutePath +: Toolchain.path).mkString(java.io.File.pathSeparator)
+      def compiled(source: String): (Step, File) = {
+        val obj = ctx.staging / s"$source.o"
+        (Step.run(ctx.clang, "-c", ctx.source / s"$source.c", "-I", include, "-o", obj), obj)
+      }
+      val headers =
+        if (Toolchain.windows(ctx))
+          Seq(
+            Step.copy(headersCmd, ctx.staging / "bin" / "headers.cmd"),
+            Step
+              .run("headers", ctx.source / "include" / "answer.h", include)
+              .env("PATH" -> ((ctx.staging / "bin").getAbsolutePath +: Toolchain.path).mkString(java.io.File.pathSeparator)))
+        else Seq(Step.copy(ctx.source / "include", include))
+      val libraries = Seq("base", "answer").map { source =>
+        val (compile, obj) = compiled(source)
+        val library = Toolchain.archive(ctx, source)
+        (Seq(compile, Toolchain.archived(ctx, name, library, obj).env("PATH" -> path)), library)
+      }
+      Recipe((headers ++ libraries.flatMap(_._1))*).libraries(libraries.map(_._2)*).includes(include)
+    }
+  )
+}
+
+// On Windows the cold build ran the copied .cmd; elsewhere there is none to run.
+val cmdStep = taskKey[Unit]("assert the .cmd step ran on Windows")
+cmdStep := Def.uncached {
+  val log = streams.value.log
+  if (scala.util.Properties.isWin) {
+    val ran = (target.value / "snx" / "vendored" / "main" * "*" / "bin" / "headers.cmd").get()
+    assert(ran.nonEmpty, "the recipe's .cmd was not copied into the staging")
+    log.info(s"snx vendored/command: the .cmd step ran from ${ran.mkString}")
+  } else log.info("snx vendored/command: the .cmd step is Windows-only; skipped on this host")
+}

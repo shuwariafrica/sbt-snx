@@ -1,6 +1,7 @@
-# A Git origin stages a plain worktree: the directory a backend is handed holds the checked-out sources and no
-# repository, so walking it never meets a file git is still creating and removing. The Command backend asserts that
-# and then builds libanswer.a out of the staged sources, so the binary printing 42 proves the same directory the
-# assertion inspected is the one that was checked out at the pinned tag.
+# A Git origin stages a plain worktree: the directory a recipe is handed holds the checked-out sources and no
+# repository, so a walk of it never meets a file git is still creating and removing. The recipe copies the worktree
+# and builds libanswer out of the copy, so the binary printing 42 proves the copy holds the sources at the pinned tag.
 > setupRepo
+> Compile/snxConfig
+> checkWorktree
 > run

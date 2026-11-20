@@ -183,8 +183,8 @@ class ConfigSuite extends munit.FunSuite:
   private val shared = new java.io.File("/x/lib/libfoo.so")
   private val sharedDir = shared.getParentFile.nn.getAbsolutePath.nn
   // Mirrors a real backend: a Static request yields an archive, a Dynamic one a shared library; `true` = built this run.
-  private val stub: (Vendored, Linkage) => (Artefacts, Boolean) =
-    (_, linkage) => (if linkage == Linkage.Static then Artefacts(Seq(archive), Seq.empty) else Artefacts(Seq(shared), Seq.empty), true)
+  private val stub: (String, Vendored, Linkage) => (Artefacts, Boolean) =
+    (_, _, linkage) => (if linkage == Linkage.Static then Artefacts(Seq(archive), Seq.empty) else Artefacts(Seq(shared), Seq.empty), true)
   private def vendored = NativeLibrary("foo", Vendored.local("vendor/foo").cmake("foo"))
 
   test("the rebind renders an unprovisioned default -l, replaces a vendored name with its archive, keeps link order"):
@@ -194,7 +194,7 @@ class ConfigSuite extends munit.FunSuite:
 
   test("the rebind reports whether a vendored library was built this run or served from the cache"):
     val requirements = Usage(Seq("foo"), Nil, Nil, Nil, Nil, false)
-    val cached: (Vendored, Linkage) => (Artefacts, Boolean) = (_, _) => (Artefacts(Seq(archive), Seq.empty), false)
+    val cached: (String, Vendored, Linkage) => (Artefacts, Boolean) = (_, _, _) => (Artefacts(Seq(archive), Seq.empty), false)
     val (_, builtReport) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("foo" -> vendored), glibc, stub)
     val (_, cachedReport) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("foo" -> vendored), glibc, cached)
     assert(builtReport.exists(_.contains("vendored, built")), s"expected a 'built' report, got $builtReport")
@@ -288,7 +288,7 @@ class ConfigSuite extends munit.FunSuite:
   test("the rebind links a vendored library's several archives as one group, its closure after the group"):
     val requirements = Usage(Seq("foo"), Nil, Nil, Nil, Nil, false)
     val library = NativeLibrary("foo", Vendored.local("vendor/foo").cmake("foo").options { case _ => Flags.libraries("m") })
-    val pair: (Vendored, Linkage) => (Artefacts, Boolean) = (_, _) => (Artefacts(Seq(archive, second), Seq.empty), true)
+    val pair: (String, Vendored, Linkage) => (Artefacts, Boolean) = (_, _, _) => (Artefacts(Seq(archive, second), Seq.empty), true)
     val (config, _) = SNXPlugin.rebind(NativeConfig.empty, requirements, Map("foo" -> library), glibc, pair)
     assertEquals(config.linkingOptions, group :+ "-lm")
 
@@ -347,7 +347,19 @@ class ConfigSuite extends munit.FunSuite:
     Seq("\\x", "C:\\x", "C:x").foreach: directory =>
       intercept[SNXError.DirectoryOutsideSource](Backend.projectDirectory(directory))
 
-  private def cmakeKey(library: Vendored): Seq[String] = library.backend.cacheKey(glibc)
+  private def cmakeKey(library: Vendored): Seq[String] =
+    val staging = new java.io.File("target/snx-cmake-key/staging")
+    val context = BuildContext(
+      new java.io.File("target/snx-cmake-key/source"),
+      staging,
+      glibc,
+      Linkage.Static,
+      Mode.releaseFast,
+      new java.io.File("clang"),
+      new java.io.File("clang++"),
+      Argument.jobs
+    )
+    library.backend.cacheKey(context, Backend.Vendoring("v", Seq.empty, Seq.empty, staging))
 
   test("the CMake cache key changes with the project directory, and equivalent spellings share one key"):
     val base = Vendored.local("v").cmake("t")
@@ -372,13 +384,13 @@ class ConfigSuite extends munit.FunSuite:
         assertEquals(cmake.moduleOverrides, Some(modules))
         assertEquals(cmake.flags.applyOrElse(glibc, (_: NativeRuntime) => Nil), Seq("-DX=ON"))
         assert(!cmake.flags.isDefinedAt(darwin))
-      case Backend.Command(_, _) => fail("a CMake library carries a CMake backend")
+      case Backend.Command(_) => fail("a CMake library carries a CMake backend")
     assertEquals(library.closureFor(glibc), Flags.libraries("m"))
 
   test("a CMake setter takes the directory as a path string and is not offered on a command build"):
     val file = compiletime.testing.typeCheckErrors("""Vendored.local("v").cmake("x").directory(new java.io.File("build/cmake"))""")
     assert(file.exists(_.message.contains("java.io.File")), file.map(_.message).mkString("\n"))
-    val command = compiletime.testing.typeCheckErrors("""Vendored.local("v").command("t")(_ => Artefacts.empty).directory("build/cmake")""")
+    val command = compiletime.testing.typeCheckErrors("""Vendored.local("v").command(_ => Recipe()).directory("build/cmake")""")
     assert(command.exists(_.message.contains("directory is not a member of snx.sbt.Vendored")), command.map(_.message).mkString("\n"))
 
   test("enforceMultithreading forces multithreading on, leaves it untouched, or fails when the project disabled it"):
@@ -390,8 +402,10 @@ class ConfigSuite extends munit.FunSuite:
 
   test("requireStaged accepts outputs under the staging directory and rejects those outside it"):
     val staging = new java.io.File("target/snx-staging-test")
-    SNXPlugin.requireStaged(Seq(new java.io.File(staging, "prefix/lib/libanswer.a")), staging)
-    intercept[SNXError.OutputOutsideStaging](SNXPlugin.requireStaged(Seq(new java.io.File("vendor/answer/include")), staging))
+    SNXPlugin.requireStaged(Seq(new java.io.File(staging, "prefix/lib/libanswer.a")), staging, "answer")
+    val error =
+      intercept[SNXError.OutputOutsideStaging](SNXPlugin.requireStaged(Seq(new java.io.File("vendor/answer/include")), staging, "answer"))
+    assert(clue(error.getMessage).contains("vendored library 'answer'"))
 
   test("contentDigest hashes an enumerated file set, and fails when a listed file is gone by the time it is read"):
     val directory = new java.io.File("target/snx-digest-test")

@@ -80,8 +80,22 @@ object SNXImports:
 
   type BuildContext = snx.sbt.BuildContext
 
-  type Artefacts = snx.sbt.Artefacts
-  val Artefacts: snx.sbt.Artefacts.type = snx.sbt.Artefacts
+  type Recipe = snx.sbt.Recipe
+  val Recipe: snx.sbt.Recipe.type = snx.sbt.Recipe
+
+  type Step = snx.sbt.Step
+  val Step: snx.sbt.Step.type = snx.sbt.Step
+
+  type Argument = snx.sbt.Argument
+
+  type Matching = snx.sbt.Matching
+  val Matching: snx.sbt.Matching.type = snx.sbt.Matching
+
+  extension (context: StringContext)
+    /** One [[snx.sbt.Argument Argument]] of text and files, `arg"CFLAGS=-include $header"`: each `File` keyed by its
+      * content, as a lone `File` argument is.
+      */
+    def arg(values: (String | File | snx.sbt.Argument)*): snx.sbt.Argument = snx.sbt.Argument.interpolate(context, values)
 
   val NativeClassifier: snx.sbt.NativeClassifier.type = snx.sbt.NativeClassifier
 

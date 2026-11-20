@@ -1,5 +1,6 @@
-# A vendored library built by the Command escape hatch (clang + archiver, no CMake) folds into the native link: its two
-# archives, returned with the referenced one first, link only as the plugin groups them on the GNU-family linkers, and
-# the vendored include dir reaches the C compile. This backend drives its own build, so it runs on every toolchain -
-# MinGW included, where the CMake backend is unsupported. The binary runs and verifies the answer end to end.
+# A vendored library built from a recipe (clang and an archiver, no CMake) folds into the native link: its two
+# archives, named with the referenced one first, link only as the plugin groups them on the GNU-family linkers, and
+# its include directory reaches the C compile. The archiver is found by its bare name on the step's PATH; on Windows
+# a .cmd copied into the staging and found through PATHEXT writes the headers. The binary runs and checks the answer.
 > run
+> cmdStep

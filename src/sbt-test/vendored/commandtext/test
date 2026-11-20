@@ -1,0 +1,61 @@
+# A path written in a recipe's text is keyed by what it names: a file by its content wherever it is, a directory of
+# the build by its content, a directory outside the build by its text alone. Each case runs where its host can form
+# it and says so where it cannot.
+> setupText
+
+# A project header named by absolute, relative and linked spelling; an include directory of the project.
+> rebuilds absolute config/a.h
+> rebuilds relative config/r.h
+> rebuilds linked config/l.h
+> rebuilds includedir inc/note.h
+# A directory holding one of sbt's targets (project/, the meta-build's), passed as a File: unchanged builds hit. Not
+# the project directory itself: scripted keeps sbt's own action cache in it, which every build rewrites.
+> steady projectfile
+# A directory outside the build named in text is keyed as its text: an edit in it is served from the cache.
+> hits hostdir @shared/s.h
+# A link inside a project directory to a file outside it, named in text and as an arg part.
+> rebuilds linktext @shared/real.h
+> rebuilds linkarg @shared/real.h
+# A header under sbt's target, named in text and as a File.
+> rebuilds gentext @target/gen/g.h
+> rebuilds genfile @target/gen/g.h
+# Paths holding `'`, folders and files holding several spaces, escaped quotes, a glued operator, escaped spaces.
+> rebuilds apostrophe @apostrophe
+> rebuilds twospacedir @onedrive/extra.h
+> rebuilds twospacefile @bigfile
+> rebuilds escapedquote inc/quoted.h
+> rebuilds glued inc/glued.h
+> rebuilds escapedspace @onedrive/escaped.h
+# A header edited at its size and modification time, as a time-preserving copy leaves it.
+> rebuildsAtTime sametime same/same.h
+# An unreadable directory beneath a named one.
+> refusedUnreadable unreadable
+# The stated boundaries: a file a response file names, and one through a link out of the build.
+> hits response cfg/h.h
+> hits linkout @shared/v.h
+
+# Windows spellings of a project header: its drive glued to -I and /FI, rooted on the step's drive, through the
+# drive's administrative share, in msys's spelling, upper-cased, and by its 8.3 short name.
+> rebuilds driveglued win/w.h
+> rebuilds fi win/w.h
+> rebuilds rooted win/w.h
+> rebuilds unc win/w.h
+> rebuilds msys win/w.h
+> rebuilds upper win/w.h
+> rebuilds shortname @onedrive/short.h
+
+# A link in project/ to sbt's target, which holds the staging: a Matching over project/ leaves the staging out, so
+# builds hit.
+> linkTarget
+> steady targetlink
+
+# What keying costs where a recipe names a host tool; printed for each cell.
+> keyTiming
+
+# A project whose target is set to a directory of its own, the directory holding it passed as a File: three builds,
+# none refused.
+> set target := baseDirectory.value / "app" / "out-custom"
+> set probeCase := "customtarget"
+> Compile/snxConfig
+> Compile/snxConfig
+> Compile/snxConfig

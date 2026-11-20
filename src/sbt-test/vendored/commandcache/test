@@ -1,0 +1,82 @@
+# The recipe-keyed command cache, route by route. Each input change rebuilds and links the new content; an unchanged
+# recipe, the test link, and a refactor leaving the recipe equal are hits. A hit restores the archive but not answer.o.
+> removeStaging
+> Compile/snxConfig
+> expectBuilt main
+> expectHolds snx-variant-1 snx-extra-1 snx-note-1 snx-overlay-1
+
+> removeStaging
+> Compile/snxConfig
+> expectCached
+
+# The test link of the same recipe shares main's archive.
+> removeStaging
+> Test/snxConfig
+> expectTestCached
+
+# The recipe's own text, edited in build.sbt.
+$ copy-file changes/variant-2.sbt build.sbt
+> reload
+> removeStaging
+> Compile/snxConfig
+> expectBuilt main
+> expectHolds snx-variant-2
+
+# A helper in another file of the build definition.
+$ copy-file changes/Warnings.scala project/Warnings.scala
+> reload
+> removeStaging
+> Compile/snxConfig
+> expectBuilt main
+
+# A header passed as a File.
+$ copy-file changes/extra-2.h config/extra.h
+> removeStaging
+> Compile/snxConfig
+> expectBuilt main
+> expectHolds snx-extra-2
+
+# A header inside an arg"..." part.
+$ copy-file changes/note-2.h config/note.h
+> removeStaging
+> Compile/snxConfig
+> expectBuilt main
+> expectHolds snx-note-2
+
+# An overlay copied onto the copied source.
+$ copy-file changes/overlay-2.h overlay/overlay.h
+> removeStaging
+> Compile/snxConfig
+> expectBuilt main
+> expectHolds snx-overlay-2
+
+# The recipe's code restructured, what it returns equal.
+$ copy-file changes/refactor.sbt build.sbt
+> reload
+> removeStaging
+> Compile/snxConfig
+> expectCached
+
+# A Matching over the project passes and keys none of the staging under target: three builds, the second and third
+# hits, the staging left as each build leaves it but for the object that tells a build from a hit.
+$ copy-file changes/matchproject.sbt build.sbt
+> reload
+> removeStaging
+> Compile/snxConfig
+> expectBuilt main
+> removeObject
+> Compile/snxConfig
+> expectCached
+> removeObject
+> Compile/snxConfig
+> expectCached
+
+# A recipe listing its staging hits on its second build, the staging holding the last build's files.
+$ copy-file changes/staging.sbt build.sbt
+> reload
+> removeStaging
+> Compile/snxConfig
+> expectBuilt main
+> removeObject
+> Compile/snxConfig
+> expectCached

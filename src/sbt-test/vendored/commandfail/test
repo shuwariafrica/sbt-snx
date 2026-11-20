@@ -1,0 +1,81 @@
+# Each failure a command build types, asserted on its cause, naming the library.
+> setupRepo
+
+# A step that exits non-zero, an output not written, a program not found, a step directory blocked by a file.
+> set probeCase := "exit"
+> expectFailure CommandBuildFailed command exited
+> set probeCase := "unwritten"
+> expectFailure CommandBuildFailed the recipe names an output its steps did not write
+> set probeCase := "program"
+> expectFailure CommandBuildFailed was not found
+> set probeCase := "blocked"
+> expectFailure CommandBuildFailed could not create
+
+# An Argument interpolated into text, and into a run directory.
+> set probeCase := "sjobs"
+> expectFailure ArgumentInText holds an Argument interpolated into a String
+> set probeCase := "indirjobs"
+> expectFailure ArgumentInText holds an Argument interpolated into a String
+
+# An output, and a run directory in target, outside the staging: refused before any step runs.
+> removeStaging
+> set probeCase := "outside"
+> expectFailure OutputOutsideStaging lies outside the build staging directory
+> expectNoStepRan
+> set probeCase := "intarget"
+> expectFailure OutputOutsideStaging lies outside the build staging directory
+> expectNoStepRan
+
+# sbt's target, which holds the library's staging, named in text: refused on every attempt, and so is the directory
+# above the staging, from a target that does not yet hold it.
+> set probeCase := "nametarget"
+> expectFailure InputHoldsStaging which holds this library's own staging
+> expectFailure InputHoldsStaging which holds this library's own staging
+> removeVendored
+> set probeCase := "namevendored"
+> expectFailure InputHoldsStaging which holds this library's own staging
+> expectFailure InputHoldsStaging which holds this library's own staging
+
+# A Git recipe reading its unfetched source fails as computed, on every attempt.
+> set probeCase := "readsource"
+> expectFailure RecipeFailed its recipe failed while it was computed
+> expectFailure RecipeFailed its recipe failed while it was computed
+# Reading it left no clone behind: a recipe naming its file then fetches the source and builds.
+> removeStaging
+> set probeCase := "named"
+> Compile/snxConfig
+> expectBuilt
+
+# A Git recipe listing its source keys differently once fetched: refused on the first attempt, and on the second with
+# the first's clone left in place.
+> set probeCase := "listsource"
+> expectFailure RecipeChanged its recipe differs between when it was keyed and when it ran
+> expectClones present
+> expectFailure RecipeChanged its recipe differs between when it was keyed and when it ran
+
+# A Git recipe naming its sources by a Matching builds; with its clone deleted the next build hits without fetching.
+> removeClones
+> removeStaging
+> set probeCase := "matching"
+> Compile/snxConfig
+> expectBuilt
+> expectClones present
+> removeClones
+> removeStaging
+> expectCached
+> expectClones absent
+
+# A CMake library's failure names it (no CMakeLists.txt; on MinGW, the toolchain the CMake backend refuses).
+> set probeCase := "cmake"
+> expectFailure * cmakelib
+
+# An unreadable file named in text, and an unreadable directory under a Matching, where permissions bind.
+# Each locked after its `set`: sbt 2.1 lists the project directory when it applies settings.
+> set probeCase := "unreadablefile"
+> lock secret/x.h
+> expectUnreadable
+> unlock secret/x.h
+> set probeCase := "unreadablematch"
+> lock matchroot/locked
+> expectUnreadable
+> unlock matchroot/locked
