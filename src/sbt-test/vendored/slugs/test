@@ -1,0 +1,8 @@
+# Each library builds into its own staging on a cold build. The Git clone the first fetched is still complete after the
+# local source named `clones` built, every archive links and answers, and each library links from a staging of its own.
+> setupRepo
+> Compile/snxConfig
+> expectClone
+> run
+> expectClone
+> expectStagings

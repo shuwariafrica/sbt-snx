@@ -234,8 +234,10 @@ SNX.libraries += NativeLibrary(
 and caching on that commit, so moving a branch or force-moving a tag rebuilds - a full commit SHA needs no resolution,
 pin one for a network-free, fully reproducible build. Builds are cached locally, keyed on the source (a `local`
 directory's content hash, or a `git` origin's resolved commit; when the remote is unreachable the cache falls back to
-the ref), the configuration, and the resolved toolchain. The build runs in a normal toolchain environment, so a
-CMakeLists using `find_package` or a toolchain file behaves as it does standalone.
+the ref), the configuration, and the resolved toolchain. Each build of a library has its own directory under
+`target/snx/vendored`, named by what it was built from, so a changed library is relinked; earlier builds stay there
+until `clean`. The build runs in a normal toolchain environment, so a CMakeLists using `find_package` or a toolchain
+file behaves as it does standalone.
 
 `cmake(targets*)` configures the project, builds `targets` (none builds the project's default), installs it into a
 staging prefix, and links **every** library the install writes there, so a multi-library project (brotli installs

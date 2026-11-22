@@ -8,10 +8,14 @@ SNX.deliverable := Executable
 // that reference each other in a cycle, and installing a man page to an absolute destination fixed at configure.
 SNX.libraries += NativeLibrary("multi", Vendored.local("vendor/multi").cmake().directory("build/cmake"))
 
-// The plugin's staging prefix for this library: target/snx/vendored/<config>/<origin-slug>/prefix (main config,
-// directory "vendor/multi" slugged to "vendor-multi").
-val prefix = settingKey[File]("the multi library's staging install prefix")
-prefix := target.value / "snx" / "vendored" / "main" / "vendor-multi" / "prefix"
+// The plugin's staging prefix for this library: target/snx/vendored/<config>/<origin slug>-<key>/prefix (main config,
+// directory "vendor/multi" slugged to "vendor-multi"), the one build this test makes.
+val prefix = taskKey[File]("the multi library's staging install prefix")
+prefix := Def.uncached {
+  val prefixes = (target.value / "snx" / "vendored" / "main" * "vendor-multi-*" / "prefix").get()
+  assert(prefixes.size == 1, s"expected one staging of the multi library, found $prefixes")
+  prefixes.head
+}
 
 val assertManStaged = taskKey[Unit]("assert the man page was installed under the staging prefix")
 assertManStaged := Def.uncached {

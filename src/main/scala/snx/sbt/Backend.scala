@@ -277,7 +277,7 @@ private[sbt] object Backend:
     private val tokenRoots: Seq[Path] = roots.flatMap((_, root) => Seq(root) ++ real(root))
     private val build: Seq[Path] = vendoring.build.map(normal).flatMap(root => Seq(root) ++ real(root))
     private val targets: Seq[Path] = targetsOf(vendoring)
-    // This library's own staging, as written and through any link above it.
+    // `vendoring.staging`, as written and through any link above it.
     private val ownStaging: Seq[Path] = (Seq(normal(vendoring.staging)) ++ realised(normal(vendoring.staging))).distinct
 
     private def refuseMarker(value: String): Unit =
@@ -337,10 +337,10 @@ private[sbt] object Backend:
       if holdsStaging(path) then
         fail(
           SNXError.InputHoldsStaging(
-            s"snx: vendored library '${vendoring.library}': the recipe passes $passed, which holds this library's own " +
-              s"staging ${vendoring.staging.getAbsolutePath}: its content is what this build writes, and sbt rewrites " +
-              "its logs under target on every run, so it cannot key the build; pass the directory beneath it that the " +
-              "build reads"))
+            s"snx: vendored library '${vendoring.library}': the recipe passes $passed, which holds or lies in " +
+              s"${vendoring.staging.getAbsoluteFile.nn.getParentFile.nn.getPath}, where this library is staged: its " +
+              "content is what this build writes, and sbt rewrites its logs under target on every run, so it cannot key " +
+              "the build; pass the directory beneath it that the build reads"))
 
     // A path under a root, or a compiler, as its token; None for any other path.
     private def relative(path: Path): Option[String] =
@@ -442,8 +442,9 @@ private[sbt] object Backend:
 
   // Identifies a vendored build to the backend: the library's name, for its failures; the build's directories (the
   // build root and the project), whose programs are hashed on every build; sbt's target directories, left out of a
-  // walk of a directory above them; and this library's own staging, which no directory the recipe passes may hold
-  // within a target.
+  // walk of a directory above them; and this library's name in its configuration's vendored directory,
+  // `<vendored>/<name>`, which no directory the recipe passes may hold within a target. Each build stages beside it, at
+  // `<vendored>/<name>-<key>`, unknown until the key is.
   final private[sbt] case class Vendoring(library: String, build: Seq[File], targets: Seq[File], staging: File)
 
   // sbt's target directories, as written and through any link.
