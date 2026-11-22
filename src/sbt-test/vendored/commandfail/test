@@ -29,12 +29,12 @@
 # sbt's target, which holds the library's staging, passed as a File: refused on every attempt, and so is the directory
 # above the staging, from a target that does not yet hold it.
 > set probeCase := "nametarget"
-> expectFailure InputHoldsStaging which holds this library's own staging
-> expectFailure InputHoldsStaging which holds this library's own staging
+> expectFailure InputHoldsStaging where this library is staged
+> expectFailure InputHoldsStaging where this library is staged
 > removeVendored
 > set probeCase := "namevendored"
-> expectFailure InputHoldsStaging which holds this library's own staging
-> expectFailure InputHoldsStaging which holds this library's own staging
+> expectFailure InputHoldsStaging where this library is staged
+> expectFailure InputHoldsStaging where this library is staged
 
 # A Git recipe reading its unfetched source fails as computed, on every attempt.
 > set probeCase := "readsource"

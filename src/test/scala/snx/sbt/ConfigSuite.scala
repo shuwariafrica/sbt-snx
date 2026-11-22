@@ -407,6 +407,15 @@ class ConfigSuite extends munit.FunSuite:
       intercept[SNXError.OutputOutsideStaging](SNXPlugin.requireStaged(Seq(new java.io.File("vendor/answer/include")), staging, "answer"))
     assert(clue(error.getMessage).contains("vendored library 'answer'"))
 
+  test("keyedStaging names a build's staging by its key, framing each part so keys concatenating alike stage apart"):
+    val vendored = new java.io.File("target/snx/vendored/main")
+    val staging = SNXPlugin.keyedStaging(vendored, "vendor-answer", Seq("ab", "c"))
+    assertEquals(staging.getParentFile, vendored)
+    assert(clue(staging.getName).matches("vendor-answer-[0-9a-f]{16}"))
+    assertEquals(SNXPlugin.keyedStaging(vendored, "vendor-answer", Seq("ab", "c")), staging)
+    assertNotEquals(SNXPlugin.keyedStaging(vendored, "vendor-answer", Seq("a", "bc")), staging)
+    assertNotEquals(SNXPlugin.keyedStaging(vendored, "vendor-answer", Seq("ab", "d")), staging)
+
   test("contentDigest hashes an enumerated file set, and fails when a listed file is gone by the time it is read"):
     val directory = new java.io.File("target/snx-digest-test")
     val present = new java.io.File(directory, "answer.c")

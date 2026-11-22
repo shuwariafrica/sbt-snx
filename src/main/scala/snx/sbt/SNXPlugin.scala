@@ -762,7 +762,7 @@ object SNXPlugin extends AutoPlugin:
     cache: BuildWideCacheConfiguration,
     converter: FileConverter,
     log: Logger): (Artefacts, Boolean) =
-    // What identifies the build to its backend, for the library staged as `name` under `staging`.
+    // What identifies the build to its backend, for the library named `name` under `staging`.
     def vendoring(name: String) =
       Backend.Vendoring(named, Seq(rootBase, projectBase).distinct, targets(rootBase, projectBase, projectTarget), new File(staging, name))
     // Refused from the path alone, so a project directory outside the source fails before any fetch or digest.
@@ -848,17 +848,18 @@ object SNXPlugin extends AutoPlugin:
     cache: BuildWideCacheConfiguration,
     converter: FileConverter,
     log: Logger): (Artefacts, Boolean) =
-    val sourceStaging = new File(staging, name)
     val outputDir = cache.outputDirectory
-    val context = BuildContext(location, sourceStaging, runtime, linkage, mode, clang, clangPP, Argument.jobs)
     // Keyed against a source (`unread`: for a Git origin a path no fetch creates) and a staging directory that do not
     // exist, so a recipe reading either keys the same whether or not an earlier build left them on disk, and the check
     // after the fetch refuses it on every attempt rather than only the first. A Local source is present and keyed by
     // its content, so it is keyed where it is.
-    val backendKey = backend.cacheKey(context.copy(source = unread, staging = new File(staging, s"$name.unread")), vendoring)
+    val keying = BuildContext(unread, new File(staging, s"$name.unread"), runtime, linkage, mode, clang, clangPP, Argument.jobs)
+    val backendKey = backend.cacheKey(keying, vendoring)
     val key =
       List(BuildInfo.version, runtime.toString, linkage.toString, mode.name, toolchainId(clang, clangPP), sourceId) ++
         backendKey
+    val sourceStaging = keyedStaging(staging, name, key)
+    val context = keying.copy(source = location, staging = sourceStaging)
     val locks = buildLocks.updateAndGet(current => if current.contains(key) then current else current.updated(key, new Object))
     val lock = locks(key)
     // The action-cache block runs only on a miss, so it flips this to record that the archive was built this run
@@ -895,6 +896,13 @@ object SNXPlugin extends AutoPlugin:
     def absolute(paths: Seq[String]): Seq[File] = paths.map(path => outputDir.resolve(path).nn.toFile.nn)
     (Artefacts(absolute(archives), absolute(includes)), built.get())
   end cachedBuild
+
+  // A build's staging, named by its key, so a changed build is a changed archive path: Scala Native's incremental link
+  // keys on its configuration and the classpath, not on an archive's content, and would keep linking the earlier
+  // archive. The key also tells apart origins whose names slug alike. Each part is framed by its length, so no two keys
+  // render alike.
+  private[sbt] def keyedStaging(staging: File, name: String, key: Seq[String]): File =
+    new File(staging, s"$name-${Hash.trimHashString(key.map(part => s"${part.length}:$part").mkString, 16)}")
 
   // Verify every vendored output lies under `staging` so the action cache can capture it; fail clearly otherwise.
   private[sbt] def requireStaged(outputs: Seq[File], staging: File, library: String): Unit =

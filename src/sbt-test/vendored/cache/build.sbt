@@ -6,10 +6,14 @@ SNX.libraries += NativeLibrary("answer", Vendored.local("vendor/answer").cmake("
 
 // The cmake build directory exists only when the backend actually built (a cache miss). The cached output is the
 // install prefix under the action cache, not this directory, so on a cache hit (build skipped) it is not recreated.
-// This path mirrors the plugin's staging scheme: target/snx/vendored/<config>/<origin-slug>/build (main config,
-// directory "vendor/answer" slugged to "vendor-answer").
-val buildDir = settingKey[File]("the answer library's cmake build directory")
-buildDir := target.value / "snx" / "vendored" / "main" / "vendor-answer" / "build"
+// It lies in the staging the resolved configuration links: <staging>/build, beside the <staging>/prefix/lib the archive
+// is installed in.
+val buildDir = taskKey[File]("the answer library's cmake build directory, in the staging the configuration links")
+buildDir := Def.uncached {
+  val config = (Compile / SNX.config).value.toString
+  val archive = "[^\\s,()\\[\\]]+(?:libanswer\\.a|answer\\.lib)".r.findFirstIn(config).map(file).getOrElse(sys.error(s"no answer archive in $config"))
+  archive.getParentFile.getParentFile.getParentFile / "build"
+}
 
 val assertBuilt = taskKey[Unit]("assert the cmake build ran (build dir present)")
 assertBuilt := Def.uncached {
@@ -26,4 +30,4 @@ assertCached := Def.uncached {
 }
 
 val removeBuild = taskKey[Unit]("delete the cmake build dir")
-removeBuild := IO.delete(buildDir.value)
+removeBuild := Def.uncached(IO.delete(buildDir.value))

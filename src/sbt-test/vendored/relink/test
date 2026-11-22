@@ -1,0 +1,9 @@
+# The binary links the vendored archive and returns its answer.
+> expectAnswer
+
+# Editing the vendored source rebuilds the library, and the next link uses the new archive: the binary returns the new
+# answer, though neither its classpath nor its own sources changed.
+$ copy-file changes/answer.c vendor/answer/answer.c
+$ copy-file changes/expected expected
+> reload
+> expectAnswer
