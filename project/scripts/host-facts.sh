@@ -8,14 +8,16 @@ set -euo pipefail
 shopt -s inherit_errexit
 unset CDPATH
 
-# A program that sizes an alternate signal stack the way Scala Native 0.5.12 does (SIGSTKSZ) and asks the kernel for it,
-# then for 64 KiB.
+# A program that sizes an alternate signal stack the way Scala Native 0.5.13 does - the larger of SIGSTKSZ and
+# sysconf(_SC_SIGSTKSZ), which follows the kernel's minimum - and asks the kernel for it, then for SIGSTKSZ alone (the
+# size earlier releases asked for) and for 64 KiB.
 readonly PROBE_SOURCE='#include <errno.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/auxv.h>
+#include <unistd.h>
 #ifndef AT_MINSIGSTKSZ
 #define AT_MINSIGSTKSZ 51
 #endif
@@ -27,8 +29,15 @@ static void ask(size_t size) {
   else printf("container: sigaltstack(%zu) refused: %s\n", size, strerror(errno));
 }
 int main(void) {
-  printf("container: SIGSTKSZ %ld, MINSIGSTKSZ %ld, AT_MINSIGSTKSZ %lu\n", (long)SIGSTKSZ, (long)MINSIGSTKSZ,
-         getauxval(AT_MINSIGSTKSZ));
+  size_t size = (size_t)SIGSTKSZ;
+  long runtime = -1;
+#ifdef _SC_SIGSTKSZ
+  runtime = sysconf(_SC_SIGSTKSZ);
+  if (runtime > 0 && (size_t)runtime > size) size = (size_t)runtime;
+#endif
+  printf("container: SIGSTKSZ %ld, MINSIGSTKSZ %ld, sysconf(_SC_SIGSTKSZ) %ld, AT_MINSIGSTKSZ %lu\n", (long)SIGSTKSZ,
+         (long)MINSIGSTKSZ, runtime, getauxval(AT_MINSIGSTKSZ));
+  ask(size);
   ask(SIGSTKSZ);
   ask(65536);
   return 0;

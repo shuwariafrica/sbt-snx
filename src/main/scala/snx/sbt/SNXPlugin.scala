@@ -582,7 +582,7 @@ object SNXPlugin extends AutoPlugin:
     )
 
   // As `nativeLogger`, but retaining what the toolchain reports. Scala Native raises a failed link as
-  // `BuildException("Failed to link ...")` (`LLVM.scala:165 @ 0.5.12`), which names the output rather than the cause;
+  // `BuildException("Failed to link ...")` (`LLVM.scala:167 @ 0.5.13`), which names the output rather than the cause;
   // the linker's own diagnosis reaches the logger instead. Retaining it is what lets a link failure be attributed.
   //
   // The severity a diagnosis arrives at is NOT a reliable guide, so every level above debug is retained: Scala Native
