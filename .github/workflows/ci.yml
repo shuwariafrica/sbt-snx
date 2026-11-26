@@ -22,12 +22,13 @@ env:
 
 jobs:
   tests:
-    name: "${{ matrix.triple }} / tests"
+    name: "${{ matrix.triple }}${{ matrix.sbt && format(' on sbt {0}', matrix.sbt) || '' }} / tests"
     strategy:
       fail-fast: false
       matrix:
-        # ONE ROW PER TARGET TRIPLE sbt-snx supports. The triple is the cell's identity and its job name; every other
-        # field says how that triple is provisioned on a runner, and what the suite should expect to resolve there.
+        # ONE ROW PER TARGET TRIPLE sbt-snx supports, plus one row that runs the scripted suite under the latest sbt
+        # line. The triple (with `sbt` where set) is the cell's identity and its job name; every other field says how
+        # that triple is provisioned on a runner, and what the suite should expect to resolve there.
         #
         # To support a new triple, add a row. No step below needs editing unless the triple needs a toolchain this
         # workflow cannot yet install, because the steps branch on `os`/`env`, which are row data.
@@ -39,6 +40,9 @@ jobs:
         #   classifier  the published OS/arch classifier the suite asserts
         #   runner      the GitHub-hosted runner label
         #   dockerImage set for container cells; absent means the job runs on the host and installs its own JDK/sbt
+        #   sbt         set on the one row that runs only the scripted suite under the latest sbt line
+        #               (`scriptedLatest`); a job of its own, so the two suites run in parallel and each fits the
+        #               job's time limit with room to spare
         #
         # Renovate cannot see this matrix: its github-actions manager reads a job's `runs-on:`, `container:` and
         # `services:` fields, not matrix data. The runner labels and image tags here move by hand, together with the
@@ -46,6 +50,7 @@ jobs:
         # and moves only the jobs' image digests.
         include:
           - { triple: x86_64-linux-gnu, os: linux, arch: x86_64, env: glibc, classifier: linux-x86_64, runner: ubuntu-26.04, dockerImage: "shuwariafrica/el10-jdk:21" }
+          - { triple: x86_64-linux-gnu, sbt: latest, os: linux, arch: x86_64, env: glibc, classifier: linux-x86_64, runner: ubuntu-26.04, dockerImage: "shuwariafrica/el10-jdk:21" }
           - { triple: aarch64-linux-gnu, os: linux, arch: aarch64, env: glibc, classifier: linux-aarch_64, runner: ubuntu-26.04-arm, dockerImage: "shuwariafrica/el10-jdk:21" }
           - { triple: x86_64-linux-musl, os: linux, arch: x86_64, env: musl, classifier: linux-x86_64, runner: ubuntu-26.04, dockerImage: "shuwariafrica/alpine-jdk:21" }
           - { triple: aarch64-linux-musl, os: linux, arch: aarch64, env: musl, classifier: linux-aarch_64, runner: ubuntu-26.04-arm, dockerImage: "shuwariafrica/alpine-jdk:21" }
@@ -131,10 +136,10 @@ jobs:
           # MSYS2 clang64 toolchain (which targets x86_64-w64-windows-gnu) forces the MinGW path and bypasses the
           # MSVC-targeting system clang entirely. vcvarsall is intentionally NOT run for this cell.
           C:\msys64\usr\bin\pacman -S --needed --noconfirm mingw-w64-clang-x86_64-toolchain
-          # Scala Native 0.5.12 declares `typedef int pid_t` for every Windows target (gc/shared/ThreadUtil.h), while
-          # mingw-w64 headers from 14.0.0.r302 on reach their own 64-bit pid_t through <wchar.h>, so no Scala Native
-          # program compiles against them. Hold the headers at the last package before that change until a Scala
-          # Native release stops declaring pid_t on MinGW.
+          # Scala Native 0.5.13 still declares `typedef int pid_t` for every Windows target (gc/shared/ThreadUtil.h),
+          # while mingw-w64 headers from 14.0.0.r302 on reach their own 64-bit pid_t through <wchar.h>, so no Scala
+          # Native program compiles against them. Hold the headers at the last package before that change until a
+          # Scala Native release stops declaring pid_t on MinGW.
           C:\msys64\usr\bin\pacman -U --noconfirm https://repo.msys2.org/mingw/clang64/mingw-w64-clang-x86_64-headers-14.0.0.r283.ga7cb47123-1-any.pkg.tar.zst
           "LLVM_BIN=C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
@@ -147,6 +152,7 @@ jobs:
         shell: bash
         run: ./project/scripts/host-facts.sh
       - name: "[${{ matrix.triple }}] Unit tests"
+        if: ${{ !matrix.sbt }}
         shell: bash
         # `testOnly *` rather than `test`: under sbt 2.x `test` resolves through `testQuick`, which skips any suite
         # holding a success record in the disk action cache that setup-sbt restores between runs. A run whose sources
@@ -155,11 +161,12 @@ jobs:
         # test digest does not cover them.
         run: ./project/scripts/run-sbt.sh -batch "testOnly *"
       - name: "[${{ matrix.triple }}] Scripted tests"
+        if: ${{ !matrix.sbt }}
         shell: bash
         run: ./project/scripts/run-sbt.sh -batch "scripted"
-      # The latest sbt line changes sbt's own behaviour, not the native link, so one cell runs the suite under it too.
+      # The latest sbt line changes sbt's own behaviour, not the native link, so one row runs the suite under it too.
       - name: "[${{ matrix.triple }}] Scripted tests on the latest sbt"
-        if: ${{ matrix.triple == 'x86_64-linux-gnu' }}
+        if: ${{ matrix.sbt == 'latest' }}
         shell: bash
         run: ./project/scripts/run-sbt.sh -batch "scriptedLatest"
 
